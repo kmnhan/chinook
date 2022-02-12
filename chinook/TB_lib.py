@@ -430,7 +430,8 @@ class TB_model:
             
         
         
-    def plotting(self,win_min=None,win_max=None,ax=None): #plots the band structure. Takes in Latex-format labels for the symmetry points indicated in the main code
+    def plotting(self, win_min=None, win_max=None,
+                 ax=None, hline_kws={}, vline_kws={}, **kwargs):
         '''
         Plotting routine for a tight-binding model evaluated over some path in k.
         If the model has not yet been diagonalized, it is done automatically
@@ -443,7 +444,13 @@ class TB_model:
             covers the entire eigenspectrum.
         
             - **ax**: matplotlib Axes, for plotting on existing Axes
+
+            - **hline_kws**: dictionary, kwargs for horizontal line plots
             
+            - **vline_kws**: dictionary, kwargs for vertical line plots
+            
+            - **kwargs**: additional kwargs are passed onto line plots
+
         *return*:
 
             - **ax**: matplotlib axes object
@@ -458,15 +465,26 @@ class TB_model:
             Emin,Emax = np.amin(self.Eband),np.amax(self.Eband)
         
         if ax is None:
-            fig=plt.figure()
-            fig.set_tight_layout(False)
-            ax=fig.add_subplot(111)
-            
-        ax.axhline(y=0,color='k',lw=1.5,ls='--')
+            ax = plt.gca()
+        
+        hl_c = hline_kws.pop("color", hline_kws.pop("c", "k"))
+        hl_ls = hline_kws.pop("ls", hline_kws.pop("linestyle", "--"))
+        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", 1))
+
+        vl_c = vline_kws.pop("color", vline_kws.pop("c", "k"))
+        vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
+        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.5))
+
+        color = kwargs.pop("color", kwargs.pop("c", "navy"))
+        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
+        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
+
+        ax.axhline(y=0,color=hl_c,lw=hl_lw,ls=hl_ls,**hline_kws)
         for b in self.Kobj.kcut_brk:
-            ax.axvline(x = b,color = 'k',ls='--',lw=1.5)
+            ax.axvline(x=b,color=vl_c,lw=vl_lw,ls=vl_ls,**vline_kws)
         for i in range(len(self.basis)):
-            ax.plot(self.Kobj.kcut,np.transpose(self.Eband)[i,:],color='navy',lw=1.5)
+            ax.plot(self.Kobj.kcut,np.transpose(self.Eband)[i,:],
+                    color=color,ls=ls,lw=lw,**kwargs)
 
         plt.xticks(self.Kobj.kcut_brk,self.Kobj.labels)
         if win_max==None or win_min==None:
@@ -477,7 +495,7 @@ class TB_model:
             ax.set_ylim(win_min,win_max) 
         ax.set_ylabel("Energy (eV)")
 
-        return ax  
+        return ax
     
     def plot_unitcell(self,ax=None):
         

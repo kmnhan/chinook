@@ -252,7 +252,7 @@ class wavefunction:
         
             - **plot_ax**: matplotlib Axes, for plotting on existing axes
             
-            - **cbar_ax**: matplotlib Axes, for use in drawing colourbar
+            - **cbar_ax**: matplotlib Axes, for use in drawing cbar
             
         *return*:
 

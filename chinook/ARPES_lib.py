@@ -695,7 +695,7 @@ class experiment:
             fermi = np.ones(self.cube[2][2])
         return fermi
 
-    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,colourmap=None):
+    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,cmap=None):
         
         '''
         Take the matrix elements and build a simulated ARPES spectrum. 
@@ -730,8 +730,8 @@ class experiment:
 
             self.update_pars(ARPES_dict)
             
-        if colourmap is None:
-            colourmap = cm.magma
+        if cmap is None:
+            cmap = cm.magma
         
         
         if self.sarpes is not None:
@@ -778,7 +778,7 @@ class experiment:
         Ig = nd.gaussian_filter(I,(kyg,kxg,wg))
         
         if slice_select!=None:
-            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,colourmap=colourmap)
+            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,cmap=cmap)
         
         if add_map:
             self.maps.append(imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang))
@@ -794,7 +794,7 @@ class experiment:
         return new_map
 
 
-    def plot_intensity_map(self,plot_map,slice_select,plot_bands=False,ax_img=None,colourmap=None):
+    def plot_intensity_map(self,plot_map,slice_select,plot_bands=False,ax_img=None,cmap=None):
          '''
         Plot a slice of the intensity map computed in *spectral*. The user selects either
         an array index along one of the axes, or the fixed value of interest, allowing
@@ -813,14 +813,14 @@ class experiment:
             
             - **ax_img**: matplotlib Axes, for option to plot onto existing Axes
             
-            - **colourmap**: matplotlib colourmap
+            - **cmap**: matplotlib cmap
 
         *return*:
 
             - **ax_img**: matplotlib axis object
          '''
-         if colourmap is None:
-             colourmap = cm.magma
+         if cmap is None:
+             cmap = cm.magma
              
          if ax_img is None:
              fig,ax_img = plt.subplots()
@@ -852,7 +852,7 @@ class experiment:
          ax_xlimit = (self.cube[index_dict[slice_select[0]][0]][0],self.cube[index_dict[slice_select[0]][0]][1])
          ax_ylimit = (self.cube[index_dict[slice_select[0]][1]][0],self.cube[index_dict[slice_select[0]][1]][1])
          plottable  = np.squeeze(plot_map[limits[1,0]:limits[1,1],limits[0,0]:limits[0,1],limits[2,0]:limits[2,1]])
-         p = ax_img.pcolormesh(X,Y,plottable,cmap=colourmap)
+         p = ax_img.pcolormesh(X,Y,plottable,cmap=cmap)
          if plot_bands and slice_select[0]!=2:
              k = np.linspace(*self.cube[index_dict[slice_select[0]][1]])
              if slice_select[0]==1:                 

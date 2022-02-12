@@ -33,6 +33,7 @@ Created on Mon Mar 23 20:08:46 2020
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #SOFTWARE.
 
+from turtle import width
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
@@ -47,9 +48,9 @@ Library for different operators of possible interest in calculating, diagnostics
 
 '''
     
-def colourmaps():
+def cmaps():
     '''
-    Plot utility, define a few colourmaps which scale to transparent at their zero values
+    Plot utility, define a few cmaps which scale to transparent at their zero values
     '''
     cmaps=[cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
     cname = ['Blues_alpha','Greens_alpha','Reds_alpha','Purples_alpha','Greys_alpha']
@@ -67,7 +68,7 @@ def colourmaps():
     map_obj = LinearSegmentedColormap.from_list(name='RdBu_alpha',colors=col_arr)
     plt.register_cmap(cmap=map_obj)
 
-colourmaps()
+cmaps()
 
 
 
@@ -224,7 +225,7 @@ def Lz(l):
     return np.identity(2*l+1)*np.array([l-m for m in range(2*l+1)])
 
 
-def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,ax=None,colourbar=True,plot=True):
+def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
     
     '''
     
@@ -278,18 +279,18 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,ax=None,colourbar=
         pvec[np.real(proj[:,0]).astype(int)] = proj[:,1]
         O = O*pvec
     
-        Ovals,ax = O_path(O,TB,Kobj,vlims,Elims,degen=degen,ax=ax,colourbar=colourbar,plot=plot)
+        Ovals, ax = O_path(O,TB,Kobj,vlims,Elims,degen=degen,**kwargs)
     except ValueError:
         print('projections need to be passed as list or array of type [index,projection]')
     
         Ovals = None
         
-    return Ovals,ax
+    return Ovals, ax
     
     
 
 
-def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,colourbar=True,colourmap=None):
+def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,widthplot=True,widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,**kwargs):
     
     '''
     
@@ -317,9 +318,9 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
         
         - **ax**: matplotlib Axes, option for plotting onto existing Axes
         
-        - **colourbar**: bool, plot colorbar on axes, default to True
+        - **cbar**: bool, plot colorbar on axes, default to True
         
-        - **colourmap**: matplotlib colourmap,i.e. LinearSegmentedColormap
+        - **cmap**: matplotlib cmap,i.e. LinearSegmentedColormap
 
     *return*:
 
@@ -346,29 +347,25 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
             except TypeError:
                 print('ERROR! Please include a K-object, or diagonalize your tight-binding model over a k-path first to initialize the eigenvectors')
                 return None
-            
-   
-       
+    
     right_product = np.einsum('ij,ljm->lim',Operator,TB.Evec)
     O_vals = np.einsum('ijk,ijk->ik',np.conj(TB.Evec),right_product)
     O_vals = np.real(O_vals) #any Hermitian operator must have real-valued expectation value--discard any imaginary component
     if degen:
         O_vals = degen_Ovals(O_vals,TB.Eband)
 
-
-    
     if ax is None:
         fig,ax = plt.subplots(1,1)
         fig.set_tight_layout(False)
 
     for b in TB.Kobj.kcut_brk:
-        ax.axvline(x = b,color = 'grey',ls='--',lw=1.0)
+        ax.axvline(x = b,color = 'k',ls='-',lw=0.5)
     
-    if colourmap is None:               
+    if cmap is None:               
         if np.sign(O_vals.min())<0 and np.sign(O_vals.max())>0:
-            colourmap = 'RdBu_alpha'
+            cmap = 'RdBu_alpha'
         else:
-            colourmap = 'Blues_alpha'
+            cmap = 'Blues_alpha'
 
     if vlims is None:
         vlims = (O_vals.min()-(O_vals.max()-O_vals.min())/10.0,O_vals.max()+(O_vals.max()-O_vals.min())/10.0)
@@ -377,14 +374,33 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
     
     if plot:
         for p in range(np.shape(O_vals)[1]):
+            from matplotlib.collections import LineCollection
+            ax.plot(TB.Kobj.kcut,TB.Eband[:,p],color='k',ls='-',lw=0.5)
+            # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],c=O_vals[:,p],cmap=cmap,marker='.',lw=0,s=80,vmin=vlims[0],vmax=vlims[1])
+            # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],s=O_vals[:,p]*100,marker='.',c='blue',lw=0,vmin=vlims[0],vmax=vlims[1])
+            
+            points = np.array([TB.Kobj.kcut,TB.Eband[:,p]]).T.reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            if widthplot:
+                lc = LineCollection(segments,
+                                    linewidths=O_vals[:,p]*3*widthscale,
+                                    colors=color)
+                # ax.fill_between(TB.Kobj.kcut,TB.Eband[:,p]-O_vals[:,p]*0.05*widthscale,TB.Eband[:,p]+O_vals[:,p]*0.05*widthscale,interpolate=True,color=color,antialiased=False)
+            else:
+                lc = LineCollection(segments,cmap=cmap,
+                                    norm=plt.Normalize(vlims[0],vlims[1]))
+                lc.set_array(O_vals[:,p])
+                lc.set_linewidth(2*widthscale)
+            O_line = ax.add_collection(lc)
+            if rasterized:
+                O_line.set_rasterized(True)
+            O_line.set_zorder(0)
 
-            ax.plot(TB.Kobj.kcut,TB.Eband[:,p],color='k',lw=0.2)
-            O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],c=O_vals[:,p],cmap=colourmap,marker='.',lw=0,s=80,vmin=vlims[0],vmax=vlims[1])
 
         ax.axis([TB.Kobj.kcut[0],TB.Kobj.kcut[-1],Elims[0],Elims[1]])
         ax.set_xticks(TB.Kobj.kcut_brk)
         ax.set_xticklabels(TB.Kobj.labels)
-        if colourbar:
+        if cbar & (not widthplot):
             plt.colorbar(O_line,ax=ax)
         ax.set_ylabel("Energy (eV)")
         
@@ -552,7 +568,7 @@ def FS(TB,ktuple,Ef,tol,ax=None):
     
     
 
-def LdotS(TB,axis=None,ax=None,colourbar=True):
+def LdotS(TB,axis=None,ax=None,cbar=True):
     '''
     Wrapper for **O_path** for computing L.S along a vector projection of interest,
     or none at all.
@@ -568,7 +584,7 @@ def LdotS(TB,axis=None,ax=None,colourbar=True):
     
         - **ax**: matplotli.Axes object for plotting
         
-        - **colourbar**: bool, display colourbar on plot
+        - **cbar**: bool, display cbar on plot
     *return*:
 
         - **O**: numpy array of Nxlen(basis) float, expectation value of operator
@@ -577,10 +593,10 @@ def LdotS(TB,axis=None,ax=None,colourbar=True):
     ***
     '''
     HSO = LSmat(TB,axis)
-    O = O_path(HSO,TB,TB.Kobj,ax=ax,colourbar=colourbar)
+    O = O_path(HSO,TB,TB.Kobj,ax=ax,cbar=cbar)
     return O
 
-def Sz(TB,ax=None,colourbar=True):
+def Sz(TB,ax=None,cbar=True):
     '''
     Wrapper for **O_path** for computing Sz along a vector projection of interest,
     or none at all.
@@ -594,7 +610,7 @@ def Sz(TB,ax=None,colourbar=True):
         
         - **ax**: matplotlib.Axes plotting object
         
-        - **colourbar**: bool, display colourbar on plot
+        - **cbar**: bool, display cbar on plot
         
     
     *return*:
@@ -605,7 +621,7 @@ def Sz(TB,ax=None,colourbar=True):
     ***
     '''
     Omat = S_vec(len(TB.basis),np.array([0,0,1]))
-    O = O_path(Omat,TB,TB.Kobj,ax=ax,colourbar=colourbar)
+    O = O_path(Omat,TB,TB.Kobj,ax=ax,cbar=cbar)
     return O
 
 
