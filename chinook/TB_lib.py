@@ -558,11 +558,12 @@ class TB_model:
         else:
             print("You have not defined a set of kpoints over which to diagonalize.")
             return False
-
-    def plotting(
-        self, win_min=None, win_max=None, ax=None, hline_kws={}, vline_kws={}, **kwargs
-    ):
-        """
+            
+        
+        
+    def plotting(self, win_min=None, win_max=None,
+                 ax=None, hline_kws={}, vline_kws={}, **kwargs):
+        '''
         Plotting routine for a tight-binding model evaluated over some path in k.
         If the model has not yet been diagonalized, it is done automatically
         before proceeding.
@@ -576,9 +577,9 @@ class TB_model:
             - **ax**: matplotlib Axes, for plotting on existing Axes
 
             - **hline_kws**: dictionary, kwargs for horizontal line plots
-
+            
             - **vline_kws**: dictionary, kwargs for vertical line plots
-
+            
             - **kwargs**: additional kwargs are passed onto line plots
 
         *return*:
@@ -586,7 +587,7 @@ class TB_model:
             - **ax**: matplotlib axes object
 
         ***
-        """
+        '''
         try:
             Emin, Emax = np.amin(self.Eband), np.amax(self.Eband)
         except AttributeError:
@@ -598,31 +599,25 @@ class TB_model:
 
         if ax is None:
             ax = plt.gca()
-
-        color = kwargs.pop("color", kwargs.pop("c", "k"))
-        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
-        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
-
+        
         hl_c = hline_kws.pop("color", hline_kws.pop("c", "k"))
         hl_ls = hline_kws.pop("ls", hline_kws.pop("linestyle", "--"))
-        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", .75))
+        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", 1))
 
         vl_c = vline_kws.pop("color", vline_kws.pop("c", "k"))
         vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
-        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.25))
+        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.5))
 
-        ax.axhline(y=0, color=hl_c, lw=hl_lw, ls=hl_ls, **hline_kws)
+        color = kwargs.pop("color", kwargs.pop("c", "navy"))
+        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
+        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
+
+        ax.axhline(y=0,color=hl_c,lw=hl_lw,ls=hl_ls,**hline_kws)
         for b in self.Kobj.kcut_brk:
-            ax.axvline(x=b, color=vl_c, lw=vl_lw, ls=vl_ls, **vline_kws)
+            ax.axvline(x=b,color=vl_c,lw=vl_lw,ls=vl_ls,**vline_kws)
         for i in range(len(self.basis)):
-            ax.plot(
-                self.Kobj.kcut,
-                np.transpose(self.Eband)[i, :],
-                color=color,
-                ls=ls,
-                lw=lw,
-                **kwargs
-            )
+            ax.plot(self.Kobj.kcut,np.transpose(self.Eband)[i,:],
+                    color=color,ls=ls,lw=lw,**kwargs)
 
         plt.xticks(self.Kobj.kcut_brk, self.Kobj.labels)
         if win_max == None or win_min == None:
@@ -634,10 +629,10 @@ class TB_model:
         ax.set_ylabel("Energy (eV)")
 
         return ax
-
-    def plot_unitcell(self, ax=None):
-
-        """
+    
+    def plot_unitcell(self,ax=None):
+        
+        '''
         Utility script for visualizing the lattice and orbital basis.
         Distinct atoms are drawn in different colours
 
@@ -650,7 +645,7 @@ class TB_model:
             - **ax**: matplotlib Axes, for further modifications to plot
 
         ***
-        """
+        '''
         edges = cell_edges(self.avec)
         coord_dict = atom_coords(self.basis)
 

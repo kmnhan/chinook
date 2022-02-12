@@ -992,17 +992,10 @@ class experiment:
             fermi = np.ones(self.cube[2][2])
         return fermi
 
-    def spectral(
-        self,
-        ARPES_dict=None,
-        slice_select=None,
-        add_map=False,
-        plot_bands=False,
-        ax=None,
-        **kwargs
-    ):
-        """
-        Take the matrix elements and build a simulated ARPES spectrum.
+    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,**kwargs):
+        
+        '''
+        Take the matrix elements and build a simulated ARPES spectrum. 
         The user has several options here for the self-energy to be used,  c.f. *SE_gen()* for details.
         Gaussian resolution broadening is the last operation performed, to be consistent with the
         practical experiment. *slice_select* instructs the method to also produce a plot of the designated
@@ -1026,7 +1019,7 @@ class experiment:
             - **Ig**: numpy array of float, resolution-broadened intensity map.
 
             - **ax**: matplotlib Axes, for further modifications to plot only if **slice_select** True
-        """
+        '''
         if not hasattr(self, "Mk"):
             self.datacube()
 
@@ -1072,66 +1065,22 @@ class experiment:
                 _calc_spectral_intensity_SE_k(I, SE, self.pks, M_factor, w, fermi, pb)
             else:
                 _calc_spectral_intensity(I, SE, self.pks, M_factor, w, fermi, pb)
-        # for p in range(self.pks.shape[0]):
-        #     if not SE_k:
-        #         I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:] += M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE-0.00005j))))*fermi
-        #     else:
-        #         I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]+= M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]-0.00005j))))*fermi
-        kxg = (
-            self.cube[0][2] * self.dk / (self.cube[0][1] - self.cube[0][0])
-            if abs(self.cube[0][1] - self.cube[0][0]) > 0
-            else 0
-        )
-        kyg = (
-            self.cube[1][2] * self.dk / (self.cube[1][1] - self.cube[1][0])
-            if abs(self.cube[1][1] - self.cube[1][0]) > 0
-            else 0
-        )
-        wg = (
-            self.cube[2][2] * self.dE / (self.cube[2][1] - self.cube[2][0])
-            if abs(self.cube[2][1] - self.cube[2][0]) > 0
-            else 0
-        )
+        kxg = (self.cube[0][2]*self.dk/(self.cube[0][1]-self.cube[0][0]) if abs(self.cube[0][1]-self.cube[0][0])>0 else 0)
+        kyg = (self.cube[1][2]*self.dk/(self.cube[1][1]-self.cube[1][0]) if abs(self.cube[1][1]-self.cube[1][0])>0 else 0)
+        wg = (self.cube[2][2]*self.dE/(self.cube[2][1]-self.cube[2][0]) if abs(self.cube[2][1]-self.cube[2][0])>0 else 0)
         Ig = nd.gaussian_filter(I, (kyg, kxg, wg), truncate=20)
 
+  
+        
         if slice_select is not None:
-            self.plot_intensity_map(Ig, slice_select, plot_bands, ax, **kwargs)
+            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,**kwargs)
+        
         if add_map:
-            self.maps.append(
-                imap.intensity_map(
-                    len(self.maps),
-                    Ig,
-                    self.cube,
-                    self.kz,
-                    self.T,
-                    self.hv,
-                    self.pol,
-                    self.dE,
-                    self.dk,
-                    self.SE_args,
-                    self.sarpes,
-                    self.ang,
-                )
-            )
+            self.maps.append(imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang))
         else:
-            self.maps = [
-                imap.intensity_map(
-                    len(self.maps),
-                    Ig,
-                    self.cube,
-                    self.kz,
-                    self.T,
-                    self.hv,
-                    self.pol,
-                    self.dE,
-                    self.dk,
-                    self.SE_args,
-                    self.sarpes,
-                    self.ang,
-                )
-            ]
+            self.maps = [imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang)]
         if slice_select:
-            return I, Ig
+            return I, Ig, ax_img
         else:
             return I, Ig
 

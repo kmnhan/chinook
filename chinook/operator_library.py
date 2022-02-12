@@ -292,6 +292,7 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
         ax = None
         
     return Ovals, ax
+    return Ovals, ax
     
     
 
@@ -359,7 +360,9 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
             except TypeError:
                 print('ERROR! Please include a K-object, or diagonalize your tight-binding model over a k-path first to initialize the eigenvectors')
                 return None
-    
+            
+   
+       
     right_product = np.einsum('ij,ljm->lim',Operator,TB.Evec)
     O_vals = np.einsum('ijk,ijk->ik',np.conj(TB.Evec),right_product)
     O_vals = np.real(O_vals) #any Hermitian operator must have real-valued expectation value--discard any imaginary component
@@ -435,7 +438,6 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
             if rasterized:
                 O_line.set_rasterized(True)
             O_line.set_zorder(0)
-
 
         ax.axis([TB.Kobj.kcut[0],TB.Kobj.kcut[-1],Elims[0],Elims[1]])
         ax.set_xticks(TB.Kobj.kcut_brk)
