@@ -41,8 +41,10 @@ from scipy.interpolate import interp1d
 import scipy.ndimage as nd
 from scipy.signal import hilbert
 
-from multiprocessing import Pool
-from multiprocessing.dummy import Pool as ThreadPool
+# from multiprocessing import Pool
+# from multiprocessing.dummy import Pool as ThreadPool
+
+from joblib import Parallel, delayed
 
 import chinook.klib as K_lib
 import chinook.orbital as olib
@@ -453,6 +455,7 @@ class experiment:
         
         valid_indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])# and self.cube[2][0]<=self.pks[i][3]<=self.cube[2][1])])
 
+        # self.thread_Mk(30,valid_indices)
         if self.threads>0:
             self.thread_Mk(self.threads,valid_indices)
         else:
@@ -528,10 +531,14 @@ class experiment:
             states in cube_indx to those within the desired window.
         '''
         div = int(len(indices)/N)
-        pool = ThreadPool(N)
-        results = np.array(pool.map(self.Mk_wrapper,[indices[ii*div:(ii+1)*div] for ii in range(N)]))
-        pool.close()
-        pool.join()
+        # pool = ThreadPool(N)
+        # results = np.array(pool.map(self.Mk_wrapper,[indices[ii*div:(ii+1)*div] for ii in range(N)]))
+        # pool.close()
+        # pool.join()
+        results = np.array(
+            Parallel(n_jobs=N,verbose=1,require='sharedmem')(delayed(self.Mk_wrapper)(
+                indices[ii*div:(ii+1)*div]) for ii in range(N)))
+        # results = np.array(pool.map(self.Mk_wrapper,[indices[ii*div:(ii+1)*div] for ii in range(N)]))
         results = results.reshape(len(indices),2,3)
         self.Mk[indices] = results
         
@@ -695,7 +702,7 @@ class experiment:
             fermi = np.ones(self.cube[2][2])
         return fermi
 
-    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,cmap=None):
+    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,**kwargs):
         
         '''
         Take the matrix elements and build a simulated ARPES spectrum. 
@@ -729,9 +736,6 @@ class experiment:
         if ARPES_dict is not None:
 
             self.update_pars(ARPES_dict)
-            
-        if cmap is None:
-            cmap = cm.magma
         
         
         if self.sarpes is not None:
@@ -778,7 +782,7 @@ class experiment:
         Ig = nd.gaussian_filter(I,(kyg,kxg,wg))
         
         if slice_select!=None:
-            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,cmap=cmap)
+            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,**kwargs)
         
         if add_map:
             self.maps.append(imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang))
@@ -794,8 +798,8 @@ class experiment:
         return new_map
 
 
-    def plot_intensity_map(self,plot_map,slice_select,plot_bands=False,ax_img=None,cmap=None):
-         '''
+    def plot_intensity_map(self,plot_map,slice_select,plot_bands=False,ax=None,**kwargs):
+        '''
         Plot a slice of the intensity map computed in *spectral*. The user selects either
         an array index along one of the axes, or the fixed value of interest, allowing
         either integer, or float selection.
@@ -818,58 +822,55 @@ class experiment:
         *return*:
 
             - **ax_img**: matplotlib axis object
-         '''
-         if cmap is None:
-             cmap = cm.magma
-             
-         if ax_img is None:
-             fig,ax_img = plt.subplots()
-             fig.set_tight_layout(False)
-         
+        '''
 
-         if type(slice_select[0]) is str:
-             str_opts = [['x','kx'],['y','ky'],['energy','w','e']]
-             dim = 0
-             for i in range(3):
-                 if slice_select[0].lower() in str_opts[i]:
-                     dim = i
-             x = np.linspace(*self.cube[dim])
-             index = np.where(abs(x-slice_select[1])==abs(x-slice_select[1]).min())[0][0]
-             slice_select = [dim,int(index)]
-             
-        
-       
-        
+        if ax is None:
+            ax = plt.gca()
+        #  if ax is None:
+            #  fig,ax = plt.subplots()
+            #  fig.set_tight_layout(False)
+
+        if type(slice_select[0]) is str:
+            str_opts = [['x','kx'],['y','ky'],['energy','w','e']]
+            dim = 0
+            for i in range(3):
+                if slice_select[0].lower() in str_opts[i]:
+                    dim = i
+            x = np.linspace(*self.cube[dim])
+            index = np.where(abs(x-slice_select[1])==abs(x-slice_select[1]).min())[0][0]
+            slice_select = [dim,int(index)]
+
+
         #new option
-         index_dict = {2:(0,1),1:(2,0),0:(2,1)}
-         
-         X,Y = np.meshgrid(np.linspace(*self.cube[index_dict[slice_select[0]][0]]),np.linspace(*self.cube[index_dict[slice_select[0]][1]]))
-         limits = np.zeros((3,2),dtype=int)
-         limits[:,1] = np.shape(plot_map)[1],np.shape(plot_map)[0],np.shape(plot_map)[2]
-         limits[slice_select[0]] = [slice_select[1],slice_select[1]+1]
+        index_dict = {2:(0,1),1:(2,0),0:(2,1)}
+        
+        X,Y = np.meshgrid(np.linspace(*self.cube[index_dict[slice_select[0]][0]]),np.linspace(*self.cube[index_dict[slice_select[0]][1]]))
+        limits = np.zeros((3,2),dtype=int)
+        limits[:,1] = np.shape(plot_map)[1],np.shape(plot_map)[0],np.shape(plot_map)[2]
+        limits[slice_select[0]] = [slice_select[1],slice_select[1]+1]
 
-         
-         ax_xlimit = (self.cube[index_dict[slice_select[0]][0]][0],self.cube[index_dict[slice_select[0]][0]][1])
-         ax_ylimit = (self.cube[index_dict[slice_select[0]][1]][0],self.cube[index_dict[slice_select[0]][1]][1])
-         plottable  = np.squeeze(plot_map[limits[1,0]:limits[1,1],limits[0,0]:limits[0,1],limits[2,0]:limits[2,1]])
-         p = ax_img.pcolormesh(X,Y,plottable,cmap=cmap)
-         if plot_bands and slice_select[0]!=2:
-             k = np.linspace(*self.cube[index_dict[slice_select[0]][1]])
-             if slice_select[0]==1:                 
-                 indices = np.array([len(k)*slice_select[1] + ii for ii in range(len(k))])
-             elif slice_select[0]==0:
-                 indices = np.array([slice_select[1] + ii*self.cube[0][2] for ii in range(len(k))])
-             for ii in range(len(self.TB.basis)):  
-                 ax_img.plot(self.TB.Eband[indices,ii],k,alpha=0.4,c='w')
+        
+        ax_xlimit = (self.cube[index_dict[slice_select[0]][0]][0],self.cube[index_dict[slice_select[0]][0]][1])
+        ax_ylimit = (self.cube[index_dict[slice_select[0]][1]][0],self.cube[index_dict[slice_select[0]][1]][1])
+        plottable  = np.squeeze(plot_map[limits[1,0]:limits[1,1],limits[0,0]:limits[0,1],limits[2,0]:limits[2,1]])
+        p = ax.pcolormesh(X,Y,plottable,**kwargs)
+        if plot_bands and slice_select[0]!=2:
+            k = np.linspace(*self.cube[index_dict[slice_select[0]][1]])
+            if slice_select[0]==1:                 
+                indices = np.array([len(k)*slice_select[1] + ii for ii in range(len(k))])
+            elif slice_select[0]==0:
+                indices = np.array([slice_select[1] + ii*self.cube[0][2] for ii in range(len(k))])
+            for ii in range(len(self.TB.basis)):  
+                ax.plot(self.TB.Eband[indices,ii],k,alpha=0.4,c='w')
 #            
-         ax_img.set_xlim(*ax_xlimit)
-         ax_img.set_ylim(*ax_ylimit)
-         
+        ax.set_xlim(*ax_xlimit)
+        ax.set_ylim(*ax_ylimit)
+        
 
-         plt.colorbar(p,ax=ax_img)
-         plt.tight_layout()
+        # plt.colorbar(p,ax=ax)
+        # plt.tight_layout()
 
-         return ax_img
+        return ax
         
     
     def plot_gui(self):

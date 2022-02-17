@@ -26,10 +26,13 @@
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 #SOFTWARE.
 import numpy as np
+import scipy.linalg
 import matplotlib.pyplot as plt
 from operator import itemgetter
 from itertools import compress
 import sys
+
+from joblib import Parallel, delayed
 
 if sys.version_info<(3,0):
     print('Warning: This software requires Python 3.0 or higher. Please update your Python instance before proceeding')
@@ -397,7 +400,7 @@ class TB_model:
         if ps_found:
             mem_summary = psutil.virtual_memory()
             avail = mem_summary.available
-            size_lim = int(0.85*avail)
+            size_lim = int(0.95*avail)
             mem_req = int(len(self.Kobj.kpts)*len(self.basis)**2*2048)
             if mem_req>size_lim:
                 partition = True
@@ -407,28 +410,39 @@ class TB_model:
                 print('Large memory load: splitting diagonalization into {:d} segments'.format(N_partitions))
  
         if self.Kobj is not None:
+            # self.Hmat_temp = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex) #initialize the Hamiltonian
             Hmat = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex) #initialize the Hamiltonian
             
+            # Hmat = Parallel(n_jobs=-1,require='sharedmem',verbose=11)(delayed(self._make_hmat_parallel)(me) for me in self.mat_els)
+            # Hmat = np.stack(Hmat, axis=1)
+            # print(Hmat.shape)
+            # Hmat = np.reshape(Hmat, (len(self.Kobj.kpts),len(self.basis),len(self.basis)))
             for me in self.mat_els:
                 Hfunc = me.H2Hk() #transform the array above into a function of k
                 Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts) #populate the Hij for all k points defined
+            # Hmat = self.Hmat_temp
             if not partition:
                 if not Eonly:
                     self.Eband,self.Evec = np.linalg.eigh(Hmat,UPLO='U') #diagonalize--my H_raw definition uses i<=j, so we want to use the upper triangle in diagonalizing
                 else:
-                    self.Eband = np.linalg.eigvalsh(Hmat,UPLO='U') #get eigenvalues only
+                    self.Eband = scipy.linalg.eigvalsh(Hmat,lower=False) #get eigenvalues only
                     self.Evec = np.array([0])
             else:
                 self.Eband = np.zeros((len(self.Kobj.kpts),len(self.basis)))
                 self.Evec =  np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
+                # Parallel(n_jobs=-1,require='sharedmem',verbose=11)(delayed(self._eig_parallel)(Hmat,splits,ni) for ni in range(len(splits)-1))
                 for ni in range(len(splits)-1):
-                    self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO ='U')
+                    self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
             return self.Eband,self.Evec
         else:
             print('You have not defined a set of kpoints over which to diagonalize.')
             return False
-            
-        
+    def _make_hmat_parallel(self,me):
+        Hfunc = me.H2Hk()
+        # self.Hmat_temp[:,me.i,me.j] = Hfunc(self.Kobj.kpts)
+        return Hfunc(self.Kobj.kpts)[:,None]
+    def _eig_parallel(self,Hmat,splits,ni):
+        self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
         
     def plotting(self, win_min=None, win_max=None,
                  ax=None, hline_kws={}, vline_kws={}, **kwargs):
