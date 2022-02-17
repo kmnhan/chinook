@@ -38,10 +38,8 @@ import sys
 from joblib import Parallel, delayed
 from .dos import tqdm_joblib
 
-if sys.version_info < (3, 0):
-    print(
-        "Warning: This software requires Python 3.0 or higher. Please update your Python instance before proceeding"
-    )
+if sys.version_info<(3,0):
+    print('Warning: This software requires Python 3.0 or higher. Please update your Python instance before proceeding')
 else:
     import chinook.H_library as Hlib
 
@@ -558,8 +556,12 @@ class TB_model:
         else:
             print("You have not defined a set of kpoints over which to diagonalize.")
             return False
-            
-        
+    def _make_hmat_parallel(self,me):
+        Hfunc = me.H2Hk()
+        # self.Hmat_temp[:,me.i,me.j] = Hfunc(self.Kobj.kpts)
+        return Hfunc(self.Kobj.kpts)[:,None]
+    def _eig_parallel(self,Hmat,splits,ni):
+        self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
         
     def plotting(self, win_min=None, win_max=None,
                  ax=None, hline_kws={}, vline_kws={}, **kwargs):

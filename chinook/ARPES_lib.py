@@ -1101,9 +1101,8 @@ class experiment:
         )
         return new_map
 
-    def plot_intensity_map(
-        self, plot_map, slice_select, plot_bands=False, ax=None, **kwargs
-    ):
+
+    def plot_intensity_map(self,plot_map,slice_select,plot_bands=False,ax=None,**kwargs):
         '''
         Plot a slice of the intensity map computed in *spectral*. The user selects either
         an array index along one of the axes, or the fixed value of interest, allowing
