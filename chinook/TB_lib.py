@@ -474,12 +474,12 @@ class TB_model:
                         self.Eband = eigvalsh3(Hmat)
                     # self.Eband = eigvalsh3(Hmat,lower=False)# UPLO='U'
                     self.Evec = np.array([0])
-            else:
-                self.Eband = np.zeros((len(self.Kobj.kpts),len(self.basis)))
-                self.Evec =  np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
-                for ni in range(len(splits)-1):
-                    # self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
-                    self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3(Hmat[splits[ni]:splits[ni+1]],lower=False)
+            # else:
+            #     self.Eband = np.zeros((len(self.Kobj.kpts),len(self.basis)))
+            #     self.Evec =  np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
+            #     for ni in range(len(splits)-1):
+            #         # self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
+            #         self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3(Hmat[splits[ni]:splits[ni+1]],lower=False)
             return self.Eband, self.Evec
         else:
             print('You have not defined a set of kpoints over which to diagonalize.')
