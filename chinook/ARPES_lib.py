@@ -45,7 +45,8 @@ from scipy.signal import hilbert
 # from multiprocessing.dummy import Pool as ThreadPool
 
 from joblib import Parallel, delayed
-
+from tqdm import tqdm
+import numba
 import chinook.klib as K_lib
 import chinook.orbital as olib
 import chinook.radint_lib as radint_lib
@@ -423,7 +424,6 @@ class experiment:
         print('Diagonalization Complete.')
         nstates = len(self.basis)
         if self.truncate:
-
             self.basis,self.Ev = self.truncate_model()
             
 
@@ -450,26 +450,31 @@ class experiment:
         rad_dict = {'hv':self.hv,'W':self.W,'rad_type':self.rad_type,'rad_args':self.rad_args,'phase_shifts':self.phase_shifts}
         self.Bfuncs,self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,dig_range)
 
-
-        print('Begin computing matrix elements: ')
-        
+        # print('Begin computing matrix elements: ')
         valid_indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])# and self.cube[2][0]<=self.pks[i][3]<=self.cube[2][1])])
 
         # self.thread_Mk(30,valid_indices)
-        if self.threads>0:
-            self.thread_Mk(self.threads,valid_indices)
+        if True:
+            self.thread_Mk(-1, valid_indices)
         else:
             self.serial_Mk(valid_indices)
 
-        print('\nDone matrix elements')
-
-
+        # print('\nDone matrix elements')
         return True
     
-    
-    
-    
-    
+    # @numba.njit()
+    def _M_compute_base(self, nstates, Ylm_calls, i):
+        Mtmp = np.zeros((2,3), dtype=np.complex128)
+        B_eval = np.array([[b[0](self.pks[i,3]),b[1](self.pks[i,3])] for b in self.Bfuncs])
+        pref = np.einsum('i,ij->ij',np.einsum('i,i->i',self.prefactors,self.Ev[int(self.pks[i,0]/nstates),:,int(self.pks[i,0]%nstates)]),B_eval[self.radint_pointers])  
+        Gtmp = np.einsum('ij,ijkl->ikl',self.proj_arr,np.einsum('ijkl,ijkl->ijkl',Ylm_calls,self.Gbasis))
+        if self.spin:
+            Mtmp[0,:] = np.einsum('ij,ijk->k',pref[:int(len(self.basis)/2)],Gtmp[:int(len(self.basis)/2)])
+            Mtmp[1,:] = np.einsum('ij,ijk->k',pref[int(len(self.basis)/2):],Gtmp[int(len(self.basis)/2):])
+        else:
+            Mtmp[0,:] = np.einsum('ij,ijk->k',pref,Gtmp)
+        return Mtmp
+
     def M_compute(self,i):
         '''
         The core method called during matrix element computation.
@@ -483,22 +488,41 @@ class experiment:
               state in k and energy.
         '''
         nstates = len(self.TB.basis)
-        phi = self.ph[int(self.pks[i,0]/nstates)]
-
-        th = self.th[i]
-        Ylm_calls = Yvect(self.Largs,self.Margs,th,phi)[self.orbital_pointers]
+        Ylm_calls = Yvect(
+            self.Largs, self.Margs, self.th[i], 
+            self.ph[int(self.pks[i,0]/nstates)]
+        )[self.orbital_pointers]
+        return self._M_compute_base(nstates=nstates, Ylm_calls=Ylm_calls, i=i)
+    
+    # def M_compute(self,i):
+    #     '''
+    #     The core method called during matrix element computation.
         
-        Mtmp = np.zeros((2,3),dtype=complex)
-        B_eval = np.array([[b[0](self.pks[i,3]),b[1](self.pks[i,3])] for b in self.Bfuncs])
-        pref = np.einsum('i,ij->ij',np.einsum('i,i->i',self.prefactors,self.Ev[int(self.pks[i,0]/nstates),:,int(self.pks[i,0]%nstates)]),B_eval[self.radint_pointers])  
-        Gtmp = np.einsum('ij,ijkl->ikl',self.proj_arr,np.einsum('ijkl,ijkl->ijkl',Ylm_calls,self.Gbasis))
-        if self.spin:
-            Mtmp[0,:] = np.einsum('ij,ijk->k',pref[:int(len(self.basis)/2)],Gtmp[:int(len(self.basis)/2)])
-            Mtmp[1,:] = np.einsum('ij,ijk->k',pref[int(len(self.basis)/2):],Gtmp[int(len(self.basis)/2):])
-        else:
-            Mtmp[0,:] = np.einsum('ij,ijk->k',pref,Gtmp)
+    #     *args*:
+    #         - **i**: integer, index and energy of state
+        
+    #     *return*:
+    #         - **Mtmp**: numpy array (2x3) of complex float corresponding to the matrix element
+    #           projection for dm = -1,0,1 (columns) and spin down or up (rows) for a given
+    #           state in k and energy.
+    #     '''
+    #     nstates = len(self.TB.basis)
+    #     phi = self.ph[int(self.pks[i,0]/nstates)]
+
+    #     th = self.th[i]
+    #     Ylm_calls = Yvect(self.Largs,self.Margs,th,phi)[self.orbital_pointers]
+        
+    #     Mtmp = np.zeros((2,3),dtype=complex)
+    #     B_eval = np.array([[b[0](self.pks[i,3]),b[1](self.pks[i,3])] for b in self.Bfuncs])
+    #     pref = np.einsum('i,ij->ij',np.einsum('i,i->i',self.prefactors,self.Ev[int(self.pks[i,0]/nstates),:,int(self.pks[i,0]%nstates)]),B_eval[self.radint_pointers])  
+    #     Gtmp = np.einsum('ij,ijkl->ikl',self.proj_arr,np.einsum('ijkl,ijkl->ijkl',Ylm_calls,self.Gbasis))
+    #     if self.spin:
+    #         Mtmp[0,:] = np.einsum('ij,ijk->k',pref[:int(len(self.basis)/2)],Gtmp[:int(len(self.basis)/2)])
+    #         Mtmp[1,:] = np.einsum('ij,ijk->k',pref[int(len(self.basis)/2):],Gtmp[int(len(self.basis)/2):])
+    #     else:
+    #         Mtmp[0,:] = np.einsum('ij,ijk->k',pref,Gtmp)
                    
-        return Mtmp
+    #     return Mtmp
     
     
     
@@ -516,7 +540,7 @@ class experiment:
 
             self.Mk[ii,:,:]+=self.M_compute(ii)
         
-    def thread_Mk(self,N,indices):
+    def thread_Mk(self, N, indices):
         '''
         Run matrix element on *N* threads using multiprocess functions, directly modifies the *Mk*
         attribute.
@@ -530,18 +554,18 @@ class experiment:
             - **indices**: list of int, all state indices for execution; restricting 
             states in cube_indx to those within the desired window.
         '''
-        div = int(len(indices)/N)
-        # pool = ThreadPool(N)
-        # results = np.array(pool.map(self.Mk_wrapper,[indices[ii*div:(ii+1)*div] for ii in range(N)]))
-        # pool.close()
-        # pool.join()
-        results = np.array(
-            Parallel(n_jobs=N,verbose=1,require='sharedmem')(delayed(self.Mk_wrapper)(
-                indices[ii*div:(ii+1)*div]) for ii in range(N)))
-        # results = np.array(pool.map(self.Mk_wrapper,[indices[ii*div:(ii+1)*div] for ii in range(N)]))
-        results = results.reshape(len(indices),2,3)
-        self.Mk[indices] = results
-        
+        import time
+        from .dos import tqdm_joblib
+        with tqdm_joblib(tqdm(desc="Computing Matrix Elements",
+                                total=len(indices))) as pb:
+            computed = Parallel(n_jobs=N, verbose=0)(
+                delayed(self.M_compute)(ii) for ii in indices)
+        for ii in indices: self.Mk[ii,:,:] += computed[ii]
+        print('Assigned.\n')
+
+    # @numba.njit()
+    def assign_to_matrix(self, computed, ii):
+        self.Mk[ii,:,:] += computed[ii]
         
     def Mk_wrapper(self,ilist):
         '''
