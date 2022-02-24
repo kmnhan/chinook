@@ -60,13 +60,15 @@ def cmaps():
     '''
     Plot utility, define a few cmaps which scale to transparent at their zero values
     '''
-    cmaps = [cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
+    cmaps=[cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
     cname = ['Blues_alpha','Greens_alpha','Reds_alpha','Purples_alpha','Greys_alpha']
     nc = 256
+
     for ii in range(len(cmaps)):
         col_arr = cmaps[ii](range(nc))
         col_arr[:,-1] = np.linspace(0,1,nc)
         map_obj = LinearSegmentedColormap.from_list(name=cname[ii],colors=col_arr)
+        
         plt.register_cmap(cmap=map_obj)
 
     for name in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu',
@@ -297,9 +299,7 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
     
 
 
-def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
-           plot=True, ax=None, widthplot=True, widthplot_method='scatter', widthscale=1, cbar=False,
-           cmap=None, color='b', rasterized=False, line_kws={}, **kwargs):
+def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,widthplot=True,widthplot_method='scatter',widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,line_kws={},**kwargs):
     
     '''
     
@@ -383,11 +383,12 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
             else:
                 cmap = 'Blues_alpha'
 
-        if vlims is None:
-            vlims = (O_vals.min()-(O_vals.max()-O_vals.min())/10.0,O_vals.max()+(O_vals.max()-O_vals.min())/10.0)
-        if Elims is None:
-            Elims = (TB.Eband.min()-(TB.Eband.max()-TB.Eband.min())/10.0,TB.Eband.max()+(TB.Eband.max()-TB.Eband.min())/10.0)
+    if vlims is None:
+        vlims = (O_vals.min()-(O_vals.max()-O_vals.min())/10.0,O_vals.max()+(O_vals.max()-O_vals.min())/10.0)
+    if Elims is None:
+        Elims = (TB.Eband.min()-(TB.Eband.max()-TB.Eband.min())/10.0,TB.Eband.max()+(TB.Eband.max()-TB.Eband.min())/10.0)
 
+    if plot:
         line_c = line_kws.pop("color", line_kws.pop("c", "k"))
         line_ls = line_kws.pop("ls", line_kws.pop("linestyle", "-"))
         line_lw = line_kws.pop("lw", line_kws.pop("linewidth", 0.5))
