@@ -47,26 +47,30 @@ rcParams.update({'font.size':14})
 Library for different operators of possible interest in calculating, diagnostics, etc for a material of interest
 
 '''
-    
+
+def diverging_alpha_cmap(name:str):
+    nc = 256
+    col_arr = cm.get_cmap(name)(range(nc))
+    col_arr[:,-1] = abs(np.linspace(-1,1,nc))
+    map_obj = LinearSegmentedColormap.from_list(name=name+'_alpha',colors=col_arr)
+    plt.register_cmap(cmap=map_obj)
+
 def cmaps():
     '''
     Plot utility, define a few cmaps which scale to transparent at their zero values
     '''
-    cmaps=[cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
+    cmaps = [cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
     cname = ['Blues_alpha','Greens_alpha','Reds_alpha','Purples_alpha','Greys_alpha']
     nc = 256
-
     for ii in range(len(cmaps)):
         col_arr = cmaps[ii](range(nc))
         col_arr[:,-1] = np.linspace(0,1,nc)
         map_obj = LinearSegmentedColormap.from_list(name=cname[ii],colors=col_arr)
-        
         plt.register_cmap(cmap=map_obj)
-    
-    col_arr = cm.RdBu(range(nc))
-    col_arr[:,-1] = abs(np.linspace(-1,1,nc))
-    map_obj = LinearSegmentedColormap.from_list(name='RdBu_alpha',colors=col_arr)
-    plt.register_cmap(cmap=map_obj)
+
+    for name in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu',
+                      'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']:
+        diverging_alpha_cmap(name)
 
 cmaps()
 
@@ -290,7 +294,9 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
     
 
 
-def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,widthplot=True,widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,**kwargs):
+def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
+           plot=True, ax=None, widthplot=True, widthplot_method='scatter', widthscale=1, cbar=False,
+           cmap=None, color='b', rasterized=False, line_kws={}, **kwargs):
     
     '''
     
@@ -313,6 +319,10 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
         - **Elims**: tuple of 2 float, limits of vertical scale for plotting
         
         - **plot**: bool, default to True, plot, or not plot the result
+
+        - **widthplot**: bool, default to True, plot with varying line width
+        
+        - **widthplot_method**: ['fill', 'lc', 'scatter'], default to 'fill'
             
         - **degen**: bool, True if bands are degenerate, sum over adjacent bands
         
@@ -355,15 +365,16 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
         O_vals = degen_Ovals(O_vals,TB.Eband)
 
     if ax is None:
-        fig,ax = plt.subplots(1,1)
-        fig.set_tight_layout(False)
+        # fig, ax = plt.subplots(1,1)
+        # fig.set_tight_layout(False)
+        ax = plt.gca()
 
     for b in TB.Kobj.kcut_brk:
         ax.axvline(x = b,color = 'k',ls='-',lw=0.5)
     
     if cmap is None:               
-        if np.sign(O_vals.min())<0 and np.sign(O_vals.max())>0:
-            cmap = 'RdBu_alpha'
+        if (O_vals.min() < 0) & (O_vals.max() > 0):
+            cmap = 'seismic_alpha'
         else:
             cmap = 'Blues_alpha'
 
@@ -371,27 +382,55 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
         vlims = (O_vals.min()-(O_vals.max()-O_vals.min())/10.0,O_vals.max()+(O_vals.max()-O_vals.min())/10.0)
     if Elims is None:
         Elims = (TB.Eband.min()-(TB.Eband.max()-TB.Eband.min())/10.0,TB.Eband.max()+(TB.Eband.max()-TB.Eband.min())/10.0)
-    
+
     if plot:
+        line_c = line_kws.pop("color", line_kws.pop("c", "k"))
+        line_ls = line_kws.pop("ls", line_kws.pop("linestyle", "-"))
+        line_lw = line_kws.pop("lw", line_kws.pop("linewidth", 0.5))
         for p in range(np.shape(O_vals)[1]):
             from matplotlib.collections import LineCollection
-            ax.plot(TB.Kobj.kcut,TB.Eband[:,p],color='k',ls='-',lw=0.5)
+            ax.plot(TB.Kobj.kcut, TB.Eband[:,p],
+                    color=line_c, ls=line_ls, lw=line_lw, **line_kws)
             # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],c=O_vals[:,p],cmap=cmap,marker='.',lw=0,s=80,vmin=vlims[0],vmax=vlims[1])
             # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],s=O_vals[:,p]*100,marker='.',c='blue',lw=0,vmin=vlims[0],vmax=vlims[1])
             
             points = np.array([TB.Kobj.kcut,TB.Eband[:,p]]).T.reshape(-1, 1, 2)
             segments = np.concatenate([points[:-1], points[1:]], axis=1)
             if widthplot:
-                lc = LineCollection(segments,
-                                    linewidths=O_vals[:,p]*3*widthscale,
-                                    colors=color)
-                # ax.fill_between(TB.Kobj.kcut,TB.Eband[:,p]-O_vals[:,p]*0.05*widthscale,TB.Eband[:,p]+O_vals[:,p]*0.05*widthscale,interpolate=True,color=color,antialiased=False)
+                if widthplot_method == 'lc':
+                    lc = LineCollection(segments,
+                                        linewidths=O_vals[:,p]*3*widthscale,
+                                        linestyles='solid',
+                                        facecolors=color,
+                                        colors=color, 
+                                        **kwargs)
+                    O_line = ax.add_collection(lc)
+                elif widthplot_method == 'scatter':
+                    O_line = ax.scatter(TB.Kobj.kcut, TB.Eband[:,p],
+                                        s=(O_vals[:,p] * 6 * widthscale) ** 2,
+                                        marker='.',  facecolors=color,
+                                        edgecolors='none',
+                                        **kwargs)
+                elif widthplot_method == 'fill':
+                    offsetsize = O_vals[:,p] * 0.1 * widthscale
+                    O_line = ax.fill_between(
+                        TB.Kobj.kcut,
+                        TB.Eband[:,p] - offsetsize,
+                        TB.Eband[:,p] + offsetsize,
+                        interpolate=True, step='mid', 
+                        facecolor=color, edgecolor=(0,0,0,0),
+                        # capstyle='butt', 
+                        **kwargs
+                    )
+                else:
+                    raise ValueError('`widthplot_method` must be one of [`fill`, `lc`, `scatter`]')
             else:
-                lc = LineCollection(segments,cmap=cmap,
-                                    norm=plt.Normalize(vlims[0],vlims[1]))
+                lc = LineCollection(segments, cmap=cmap,
+                                    norm=plt.Normalize(vlims[0],vlims[1]),
+                                    **kwargs)
                 lc.set_array(O_vals[:,p])
-                lc.set_linewidth(2*widthscale)
-            O_line = ax.add_collection(lc)
+                lc.set_linewidth(2 * widthscale)
+                O_line = ax.add_collection(lc)
             if rasterized:
                 O_line.set_rasterized(True)
             O_line.set_zorder(0)
