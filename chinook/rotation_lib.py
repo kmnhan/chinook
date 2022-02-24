@@ -9,6 +9,7 @@ Various functions relevant to rotations
 
 """
 import numpy as np
+import scipy.linalg
 from math import atan2
 
     
@@ -18,7 +19,6 @@ def Euler(rotation):
     rotation matrix. Special case for B = +/- Z*pi where conventional approach doesn't
     work due to division by zero, then Euler_A is zero and Euler_y is arctan(R10,R00)
 
-    
     *args*:
 
         - **rotation**: numpy array of 3x3 float (rotation matrix)
@@ -31,23 +31,16 @@ def Euler(rotation):
         
     ***
     '''
-    
-    if type(rotation)==np.ndarray:
+    if isinstance(rotation, np.ndarray):
         rot_mat = rotation
     else:
-        
         rot_mat = Rodrigues_Rmat(rotation[0],rotation[1])
     if abs(rot_mat[2,2])!=1.0:
-    
-    	Euler_A = atan2(rot_mat[1,2],rot_mat[0,2])
-    
-    	Euler_y = atan2(rot_mat[2,1],-rot_mat[2,0])
-    
-    	Euler_B = np.arccos(rot_mat[2,2])
-    	if Euler_B>np.pi:
-    		Euler_B = 2*np.pi- Euler_B
-    
-    	
+        Euler_A = atan2(rot_mat[1,2],rot_mat[0,2])
+        Euler_y = atan2(rot_mat[2,1],-rot_mat[2,0])
+        Euler_B = np.arccos(rot_mat[2,2])
+        if Euler_B > np.pi:   
+            Euler_B = 2 * np.pi - Euler_B
     else:
         if np.sign(rot_mat[2,2])==1.0:
             Euler_B = 0.0
@@ -59,8 +52,7 @@ def Euler(rotation):
         else:
             Euler_A = 0
             Euler_y = atan2(rot_mat[1,0],-rot_mat[0,0])
-
-    return Euler_A,Euler_B,Euler_y
+    return Euler_A, Euler_B, Euler_y
 
 
 
@@ -166,7 +158,7 @@ def rot_vector(Rmatrix):
         
     ***
     '''
-    L,nvec=np.linalg.eig(Rmatrix)
+    L, nvec = scipy.linalg.eig(Rmatrix)
     nvec = np.real(nvec[:,np.where(abs(L-1)<1e-10)[0][0]])
     theta = np.arccos((np.trace(Rmatrix)-1)/2)
     R_tmp = Rodrigues_Rmat(nvec,theta)
