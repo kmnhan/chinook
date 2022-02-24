@@ -100,13 +100,12 @@ class orbital:
             
         ***
         '''
-        
-        
+
         self.atom = atom
         self.index = index
         self.label = label
-        self.pos = pos 
-        self.Z = Z 
+        self.pos = pos
+        self.Z = Z
         self.mn = am.get_mass_from_number(self.Z)*mN #atomic mass
         self.spin = spin #spin (+/-1)
         self.lam = lam #spin-orbit coupling strength
@@ -119,7 +118,6 @@ class orbital:
         else:
             self.slab_index = slab_index
             self.depth = self.pos[2]
-
         self.orient = orient
         if type(self.orient)==np.ndarray:
             self.proj = self.orient #projection into Ylm of form in projdict--array: [Real,Imag,l,ml]
@@ -127,7 +125,6 @@ class orbital:
             self.proj = projdict[self.label[1:]]
             if abs(self.orient[-1])>0:
                 self.proj,self.Dmat = rot_projection(self.l,self.proj,self.orient)
-
         else:
             self.proj = projdict[self.label[1:]]
             
@@ -146,7 +143,6 @@ class orbital:
         orbital_copy.proj = self.proj.copy()
         orbital_copy.Dmat = self.Dmat.copy()
         return orbital_copy
-
         
 def rot_projection(l,proj,rotation):
     
@@ -191,9 +187,7 @@ def rot_projection(l,proj,rotation):
     A,B,y = rotlib.Euler(rotation)
     Dmat = WignerD(l,A,B,y)
     Ynew = np.dot(Dmat,Ylm_vec)
-
     proj = []
-
     for a in range(2*l+1):
         if abs(Ynew[a])>10**-10:
             proj.append([np.around(np.real(Ynew[a]),10),np.around(np.imag(Ynew[a]),10),l,a-l])
@@ -227,7 +221,6 @@ def fact(n):
     else:
         return n*fact(n-1)
     
-    
 def slab_basis_copy(basis,new_posns,new_inds):
     
     '''
@@ -259,7 +252,6 @@ def slab_basis_copy(basis,new_posns,new_inds):
         local_orb_copy.pos = new_posns[o[0]]
         new_basis[int(new_inds[o[0]])] = local_orb_copy
     return new_basis
-    
 
 def sort_basis(basis,slab):
     
@@ -310,7 +302,6 @@ def spin_double(basis,lamdict):
     '''
     LB = len(basis)
     basis_double = []
-
     for ind in range(LB):
         basis[ind].spin = -1
         basis[ind].lam = lamdict[basis[ind].atom]
@@ -322,16 +313,13 @@ def spin_double(basis,lamdict):
 
             
 if __name__=="__main__":
-    
     Z = 26
     i = 0
     label = ["32xz","32yz","32xy"]
     pos = np.zeros(3)
-    
     dxz = orbital(0,i,label[0],pos,Z)
     dyz = orbital(0,i+1,label[1],pos,Z)
     dxy = orbital(0,i+2,label[2],pos,Z)
-    
     v = np.array([1,0,0]) 
     a = np.pi/2
     print('x')
