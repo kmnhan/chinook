@@ -28,6 +28,8 @@
 import numpy as np
 import scipy.linalg
 import matplotlib.pyplot as plt
+import numba
+from tqdm import tqdm
 from operator import itemgetter
 from itertools import compress
 import sys
@@ -52,6 +54,35 @@ Tight-Binding Utility module
 
 '''
 
+def eigh3(a, lower=False, **kwargs):
+    w, v = zip(*Parallel(n_jobs=-1)(
+        delayed(scipy.linalg.eigh)(a[i,:,:], lower=lower, **kwargs)
+        for i in range(a.shape[0])))
+    return np.asarray(w), np.asarray(v)
+
+def eigvalsh3(a, lower=False, **kwargs):
+    w = Parallel(n_jobs=-1)(
+        delayed(scipy.linalg.eigvalsh)(a[i,:,:], lower=lower, **kwargs)
+        for i in range(a.shape[0]))
+    return np.asarray(w)
+
+# @numba.njit(nogil=True, parallel=True)
+# def eigh3(a):
+#     a = a.transpose((0,2,1))
+#     W = np.empty((a.shape[0], a.shape[-1]))
+#     V = np.empty_like(a)
+#     for i in numba.prange(a.shape[0]):
+#         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+#     return W, V
+
+# @numba.njit(nogil=True, parallel=True)
+# def eigvalsh3(a):
+#     a = a.transpose((0,2,1))
+#     W = np.empty((a.shape[0], a.shape[-1]))
+#     V = np.empty_like(a)
+#     for i in numba.prange(a.shape[0]):
+#         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+#     return W, V
 
 class H_me:
     '''
@@ -179,7 +210,12 @@ class H_me:
         H_copy.H = [h for h in self.H]
         return H_copy
     
-    
+@numba.njit(nogil=True)
+def _get_hmat_elements(i, j, Hmat, me_H, kpts):
+    Hslice = np.zeros(Hmat.shape[0], dtype=np.complex128)
+    for m in me_H:
+        Hslice += m[-1] * np.exp(1.0j * np.dot(kpts, np.ascontiguousarray(m[:3])))
+    Hmat[:,i,j] = Hslice
         
 class TB_model:
     '''
@@ -375,7 +411,7 @@ class TB_model:
         return Hlist
         
         
-    def solve_H(self,Eonly = False):
+    def solve_H(self, Eonly=False):
         '''
         This function diagonalizes the Hamiltonian over an array of momentum vectors.
         It uses the **mat_el** objects to quickly define lambda functions of 
@@ -397,52 +433,57 @@ class TB_model:
         ***
         '''
         partition = False
-        if ps_found:
-            mem_summary = psutil.virtual_memory()
-            avail = mem_summary.available
-            size_lim = int(0.95*avail)
-            mem_req = int(len(self.Kobj.kpts)*len(self.basis)**2*2048)
-            if mem_req>size_lim:
-                partition = True
-                N_partitions = int(np.ceil(mem_req/size_lim))
-                splits = [j*int(np.floor(len(self.Kobj.kpts)/N_partitions)) for j in range(N_partitions)]
-                splits.append(len(self.Kobj.kpts))
-                print('Large memory load: splitting diagonalization into {:d} segments'.format(N_partitions))
- 
+        # if ps_found:
+        #     mem_summary = psutil.virtual_memory()
+        #     avail = mem_summary.available
+        #     size_lim = int(0.95*avail)
+        #     mem_req = int(len(self.Kobj.kpts)*len(self.basis)**2*2048)
+        #     if mem_req>size_lim:
+        #         partition = True
+        #         N_partitions = int(np.ceil(mem_req/size_lim))
+        #         splits = [j*int(np.floor(len(self.Kobj.kpts)/N_partitions)) for j in range(N_partitions)]
+        #         splits.append(len(self.Kobj.kpts))
+        #         print('Large memory load: splitting diagonalization into {:d} segments'.format(N_partitions))
+
         if self.Kobj is not None:
-            # self.Hmat_temp = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex) #initialize the Hamiltonian
-            Hmat = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex) #initialize the Hamiltonian
-            
-            # Hmat = Parallel(n_jobs=-1,require='sharedmem',verbose=11)(delayed(self._make_hmat_parallel)(me) for me in self.mat_els)
-            # Hmat = np.stack(Hmat, axis=1)
-            # print(Hmat.shape)
-            # Hmat = np.reshape(Hmat, (len(self.Kobj.kpts),len(self.basis),len(self.basis)))
-            for me in self.mat_els:
-                Hfunc = me.H2Hk() #transform the array above into a function of k
-                Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts) #populate the Hij for all k points defined
-            # Hmat = self.Hmat_temp
+            # initialize the Hamiltonian
+            Hmat = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
+            if not self.mat_els[0].executable:
+                from .dos import tqdm_joblib
+                with tqdm_joblib(tqdm(desc="Constructing Hamiltonian",
+                                      total=len(self.mat_els))) as pb:
+                    Parallel(n_jobs=-1, verbose=0, require='sharedmem')(
+                        delayed(_get_hmat_elements)(
+                            me.i, me.j, Hmat, np.array(me.H, dtype=np.complex128),
+                            self.Kobj.kpts.astype(np.complex128)) for me in self.mat_els)
+            else:
+                for me in self.mat_els:
+                    # transform the array above into a function of k
+                    Hfunc = me.H2Hk()
+                    # populate the Hij for all k points defined
+                    Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts)
             if not partition:
                 if not Eonly:
-                    self.Eband,self.Evec = np.linalg.eigh(Hmat,UPLO='U') #diagonalize--my H_raw definition uses i<=j, so we want to use the upper triangle in diagonalizing
+                    with tqdm_joblib(tqdm(desc="Diagonalizing over k",
+                                          total=len(self.Kobj.kpts))) as pb:
+                        self.Eband, self.Evec = eigh3(Hmat)
+                    # self.Eband,self.Evec = eigh3(Hmat,lower=False)
                 else:
-                    self.Eband = scipy.linalg.eigvalsh(Hmat,lower=False) #get eigenvalues only
+                    with tqdm_joblib(tqdm(desc="Diagonalizing over k",
+                                          total=len(self.Kobj.kpts))) as pb:
+                        self.Eband = eigvalsh3(Hmat)
+                    # self.Eband = eigvalsh3(Hmat,lower=False)# UPLO='U'
                     self.Evec = np.array([0])
             else:
                 self.Eband = np.zeros((len(self.Kobj.kpts),len(self.basis)))
                 self.Evec =  np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
-                # Parallel(n_jobs=-1,require='sharedmem',verbose=11)(delayed(self._eig_parallel)(Hmat,splits,ni) for ni in range(len(splits)-1))
                 for ni in range(len(splits)-1):
-                    self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
-            return self.Eband,self.Evec
+                    # self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
+                    self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3(Hmat[splits[ni]:splits[ni+1]],lower=False)
+            return self.Eband, self.Evec
         else:
             print('You have not defined a set of kpoints over which to diagonalize.')
             return False
-    def _make_hmat_parallel(self,me):
-        Hfunc = me.H2Hk()
-        # self.Hmat_temp[:,me.i,me.j] = Hfunc(self.Kobj.kpts)
-        return Hfunc(self.Kobj.kpts)[:,None]
-    def _eig_parallel(self,Hmat,splits,ni):
-        self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
         
     def plotting(self, win_min=None, win_max=None,
                  ax=None, hline_kws={}, vline_kws={}, **kwargs):
