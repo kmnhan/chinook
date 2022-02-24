@@ -30,6 +30,13 @@ import sys
 import numpy as np
 from scipy.special import erf
 import matplotlib.pyplot as plt
+import numba
+from tqdm import tqdm
+from numba_progress import ProgressBar as tqdm_numba
+import contextlib
+import joblib
+import itertools
+from joblib import Parallel, delayed
 import chinook.tetrahedra as tetrahedra
 
 
@@ -64,23 +71,16 @@ def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3)):
     
     ***
     '''
-    kpts = tetrahedra.gen_mesh(TB.avec,NK)+origin
+    kpts = tetrahedra.gen_mesh(TB.avec, NK) + origin
     TB.Kobj.kpts = kpts
     TB.solve_H()
-    print('Diagonalization complete')
+    # print('Calculating DOS...\n')
     if dE is None:
         dE = def_dE(TB.Eband)
-
-    Elin = np.arange(TB.Eband.min()-10*dE,TB.Eband.max()+10*dE,dE*0.5)
-    DOS = np.zeros(len(Elin))
-    for ki in range(len(kpts)):
-        sys.stdout.write('\r'+progress_bar(ki+1,len(kpts)))
-        for bi in range(len(TB.basis)): #iterate over all bands
-
-            tmp_add =  gaussian(TB.Eband[ki,bi],Elin,dE)
-            DOS+=tmp_add
-    print('\n')
-    DOS = DOS/len(kpts)
+        print('Broadening: {:0.04f} eV\n'.format(dE))
+    Elin = np.arange(TB.Eband.min()-10*dE, TB.Eband.max()+10*dE,dE*0.5)
+    with tqdm_numba(desc='Calculating DOS',total=len(kpts)) as pb:
+        DOS = iterate_dos(len(kpts), len(TB.basis), TB.Eband, Elin, dE, pb)
     if NE is not None:
         E_resample = np.linspace(Elin[0],Elin[-1],NE)
         DOS_resample = np.interp(E_resample,Elin,DOS)
@@ -90,9 +90,18 @@ def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3)):
     ax = fig.add_subplot(111)
     ax.plot(Elin,DOS)
     
-    return DOS,Elin
+    return DOS, Elin
 
+@numba.njit(nogil=True)
+def iterate_dos(len_kpts, len_basis, Eband, Elin, dE, progress_hook):
+    DOS = np.zeros(len(Elin))
+    for ki in numba.prange(len_kpts):
+        for bi in range(len_basis):
+            DOS += gaussian(Eband[ki,bi],Elin,dE)
+        progress_hook.update(1)
+    return DOS / len_kpts
 
+@numba.njit(nogil=True)
 def def_dE(Eband):
     
     '''
@@ -113,12 +122,11 @@ def def_dE(Eband):
     ***
     '''
     
-    dE = Eband.max()-Eband.min()
-    for bi in range(np.shape(Eband)[1]):
-        diff = abs(Eband[1:,bi]-Eband[:-1,bi]).mean()
-        if dE>diff:
+    dE = Eband.max() - Eband.min()
+    for bi in numba.prange(np.shape(Eband)[1]):
+        diff = np.abs(Eband[1:,bi] - Eband[:-1,bi]).mean()
+        if dE > diff:
             dE = diff
-    print('Broadening: {:0.04f} eV\n'.format(dE))
     return dE
 
 def ne_broad_numerical(TB,NK,NE=None,dE=None,origin=np.zeros(3)):
@@ -241,13 +249,13 @@ def ne_broad_analytical(TB,NK,NE=None,dE=None,origin=np.zeros(3),plot = True):
 
     if dE is None:
         dE = def_dE(TB.Eband)
+        print('Broadening: {:0.04f} eV\n'.format(dE))
     Elin = np.arange(TB.Eband.min()-10*dE,TB.Eband.max()+10*dE,dE*0.5)
 
     nE = np.zeros(len(Elin))
     for ki in range(len(kpts)):
         sys.stdout.write('\r'+progress_bar(ki+1,len(kpts)))
         for bi in range(len(TB.basis)): #iterate over all bands
-
             tmp_add =  error_function(TB.Eband[ki,bi],Elin,dE)
             nE+=tmp_add
     print('\n')
@@ -266,7 +274,7 @@ def ne_broad_analytical(TB,NK,NE=None,dE=None,origin=np.zeros(3),plot = True):
     return nE,Elin
 
 
-    
+# @numba.njit()
 def error_function(x0,x,sigma):
     
     '''
@@ -290,7 +298,7 @@ def error_function(x0,x,sigma):
     return 0.5*(erf((x-x0)/(np.sqrt(2)*sigma))+1)      
             
             
-            
+@numba.njit(nogil=True)
 def gaussian(x0,x,sigma):
 
     '''
@@ -310,7 +318,7 @@ def gaussian(x0,x,sigma):
 
     ***
     '''
-    return np.exp(-(x-x0)**2/(2*sigma**2))*np.sqrt(1/(2*np.pi))/sigma
+    return np.exp(-(x - x0)**2 / (2 * sigma**2)) / np.sqrt(2*np.pi) / sigma
 ################# Density of States following the Blochl Prescription #######################
 ###############https://journals.aps.org/prb/pdf/10.1103/PhysRevB.49.16223####################
     
@@ -441,10 +449,6 @@ def proj_mat(proj,lenbasis):
     projector*=np.real(proj_vect)
     
     return projector
-        
-        
-    
-
 
 def pdos_tetra(TB,NE,NK,proj):
     
@@ -662,12 +666,24 @@ def n4(energy,epars):
 
 ##############################-------n(E)---------#############################
     
-    
 def progress_bar(N,Nmax):
     frac = N/Nmax
     st = ''.join(['|' for i in range(int(frac*30))])
     st = '{:30s}'.format(st)+'{:3d}%'.format(int(frac*100))
     return st
-    
-    
 
+# https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
