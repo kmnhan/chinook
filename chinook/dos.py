@@ -26,22 +26,20 @@
 
 
 
+import contextlib
 import sys
-import numpy as np
-from scipy.special import erf
+
+import joblib
 import matplotlib.pyplot as plt
 import numba
-from tqdm import tqdm
+import numpy as np
 from numba_progress import ProgressBar as tqdm_numba
-import contextlib
-import joblib
-import itertools
-from joblib import Parallel, delayed
+from scipy.special import erf
+
 import chinook.tetrahedra as tetrahedra
 
 
-
-def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3)):
+def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3), ax=None, **plot_kw):
     '''
     Energy-broadened discrete density of states calculation.
     The Hamiltonian is diagonalized over the kmesh defined by NK and
@@ -80,20 +78,19 @@ def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3)):
         print('Broadening: {:0.04f} eV\n'.format(dE))
     Elin = np.arange(TB.Eband.min()-10*dE, TB.Eband.max()+10*dE,dE*0.5)
     with tqdm_numba(desc='Calculating DOS',total=len(kpts)) as pb:
-        DOS = iterate_dos(len(kpts), len(TB.basis), TB.Eband, Elin, dE, pb)
+        DOS = iterate_dos_broad(len(kpts), len(TB.basis), TB.Eband, Elin, dE, pb)
     if NE is not None:
         E_resample = np.linspace(Elin[0],Elin[-1],NE)
         DOS_resample = np.interp(E_resample,Elin,DOS)
         DOS = DOS_resample
         Elin = E_resample
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.plot(Elin,DOS)
-    
+    if ax is None:
+        ax = plt.gca()
+    ax.plot(Elin, DOS, **plot_kw)
     return DOS, Elin
 
 @numba.njit(nogil=True)
-def iterate_dos(len_kpts, len_basis, Eband, Elin, dE, progress_hook):
+def iterate_dos_broad(len_kpts, len_basis, Eband, Elin, dE, progress_hook):
     DOS = np.zeros(len(Elin))
     for ki in numba.prange(len_kpts):
         for bi in range(len_basis):
@@ -121,7 +118,6 @@ def def_dE(Eband):
     
     ***
     '''
-    
     dE = Eband.max() - Eband.min()
     for bi in numba.prange(np.shape(Eband)[1]):
         diff = np.abs(Eband[1:,bi] - Eband[:-1,bi]).mean()
@@ -157,21 +153,23 @@ def ne_broad_numerical(TB,NK,NE=None,dE=None,origin=np.zeros(3)):
     
     ***
     '''
-    DOS,Elin = dos_broad(TB,NK,NE,dE,origin)
-    delta = Elin[1]-Elin[0]
-    ne = np.zeros(len(Elin))
-    for ii in range(len(Elin)):
-        if ii==0:
-            val = (2*DOS[ii]+DOS[ii+1])/3
-        elif ii==(len(Elin)-1):
-            val = (2*DOS[ii] + DOS[ii-1])/3
-            ne[ii] = ne[ii-1]
-        else:
-            val = (DOS[ii-1]+DOS[ii]*2 + DOS[ii+1])/4
-            ne[ii] = ne[ii-1]
-        ne[ii] += val*delta
-    return ne,Elin
+    return _ne_broad_numerical_calc(*dos_broad(TB,NK,NE,dE,origin))
 
+@numba.njit(nogil=True)
+def _ne_broad_numerical_calc(DOS, Elin):
+    delta = Elin[1] - Elin[0]
+    ne = np.zeros_like(Elin)
+    for i in numba.prange(len(Elin)):
+        if i == 0:
+            val = (2 * DOS[i] + DOS[i+1]) / 3
+        elif i == (len(Elin) - 1):
+            val = (2 * DOS[i] + DOS[i-1]) / 3
+            ne[i] = ne[i-1]
+        else:
+            val = (DOS[i-1] + DOS[i] * 2 + DOS[i+1]) / 4
+            ne[i] = ne[i-1]
+        ne[i] += val * delta
+    return ne, Elin
 
 def find_EF_broad_dos(TB,NK,occ,NE=None,dE=None,origin=np.zeros(3)):
     '''
@@ -207,9 +205,7 @@ def find_EF_broad_dos(TB,NK,occ,NE=None,dE=None,origin=np.zeros(3)):
     EF = Elin[ind_EF]
     print('Fermi Energy is at: {:0.05f}+/-{:0.06f} eV'.format(EF,Elin[1]-Elin[0]))
     return EF
-    
-        
-        
+
 def ne_broad_analytical(TB,NK,NE=None,dE=None,origin=np.zeros(3),plot = True):
     '''
 
@@ -269,10 +265,7 @@ def ne_broad_analytical(TB,NK,NE=None,dE=None,origin=np.zeros(3),plot = True):
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.plot(Elin,nE)
-
-    
     return nE,Elin
-
 
 # @numba.njit()
 def error_function(x0,x,sigma):
@@ -299,8 +292,7 @@ def error_function(x0,x,sigma):
             
             
 @numba.njit(nogil=True)
-def gaussian(x0,x,sigma):
-
+def gaussian(x0, x, sigma):
     '''
     Evaluate a normalized Gaussian function.
     
@@ -322,9 +314,8 @@ def gaussian(x0,x,sigma):
 ################# Density of States following the Blochl Prescription #######################
 ###############https://journals.aps.org/prb/pdf/10.1103/PhysRevB.49.16223####################
     
-def dos_tetra(TB,NE,NK):
+def dos_tetra(TB, NE, NK, ax=None, **plot_kw):
     '''
-
     Generate a tetrahedra mesh of k-points which span the BZ with even distribution
     Diagonalize over this mesh and then compute the resulting density of states as
     prescribed in the above paper. 
@@ -346,28 +337,31 @@ def dos_tetra(TB,NE,NK):
     
     ***
     '''
-    kpts,tetra = tetrahedra.mesh_tetra(TB.avec,NK)
-    print('k tetrahedra defined')
+    kpts, tetra = tetrahedra.mesh_tetra(TB.avec, NK)
     TB.Kobj.kpts = kpts
     TB.solve_H()
-    print('Diagonalization complete')
-    Elin = np.linspace(TB.Eband.min(),TB.Eband.max(),NE)
-    
-    DOS = np.zeros(len(Elin))
-    for ki in range(len(tetra)):
-        sys.stdout.write('\r'+progress_bar(ki+1,len(tetra)))
-        for bi in range(len(TB.basis)): #iterate over all bands
-            DOS += band_contribution(TB.Eband[tetra[ki]][:,bi],Elin,len(tetra))
-    print('DOS calculation complete')
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.plot(Elin,DOS)               
-    return Elin,DOS
+    Elin = np.linspace(TB.Eband.min(), TB.Eband.max(), NE) 
+    with tqdm_numba(desc='Calculating DOS', total=len(tetra)) as pb:
+        DOS = _calc_dos_tetra(len(tetra), len(TB.basis), 
+                                TB.Eband, Elin, tetra, pb)
+    if ax is None:
+        ax = plt.gca()
+    ax.plot(Elin, DOS, **plot_kw)
+    return Elin, DOS
 
-def band_contribution(eigenvals,w_domain,volume):
-    
+@numba.njit(nogil=True)
+def _calc_dos_tetra(len_tetra, len_basis, Eband, Elin, tetra, progress_hook):
+    DOS = np.zeros_like(Elin, dtype=np.float64)
+    for ki in numba.prange(len_tetra):
+        E_tmp = Eband[tetra[ki]]
+        for bi in range(len_basis):
+            DOS += band_contribution(E_tmp[:,bi], Elin, len_tetra)
+        progress_hook.update(1)
+    return DOS
+
+@numba.njit(nogil=True)
+def band_contribution(eigenvals, w_domain, volume):
     '''
-
     Compute the contribution over a single tetrahedron, from a 
     single band, to the density of states
     
@@ -386,15 +380,44 @@ def band_contribution(eigenvals,w_domain,volume):
     ***
     '''
     eig_sort = sorted(eigenvals)
-    args = (*eig_sort,1,volume)
+    args = np.array([*eig_sort, 1, volume], dtype=np.float64)
     DOS = dos_func(w_domain,args)
-    
     return DOS
+
+@numba.njit(nogil=True)
+def band_occupation(eigenvals, w_domain, volume):
+    '''
+    Compute the contribution over a single tetrahedron, from a 
+    single band, to the electronic occupation number
+    
+    *args*:
+
+        - **eigenvals**: numpy array of float, energy values at corners
+        
+        - **w_domain**: numpy array of float, energy domain
+        
+        - **volume**: int, number of tetrahedra in the total mesh
+    
+    *return*:
+
+        - **DOS**: numpy array of float, same length as w_domain
+    
+    ***
+    '''
+    eig_sort = sorted(eigenvals)
+    args = np.array([*eig_sort, 1, volume], dtype=np.float64)
+    n_elect = n_func(w_domain,args)
+    return n_elect
+
+
+
+
+
 
 ########################Partial Density of States##############################
 
-    
-def proj_avg(eivecs,proj_matrix):
+@numba.njit(nogil=True)
+def proj_avg(eivecs, proj_matrix):
     '''
     Calculate the expectation value of the projection operator, for each of the
     eigenvectors, at each of the vertices, and then sum over the vertices. We
@@ -414,9 +437,39 @@ def proj_avg(eivecs,proj_matrix):
       
     ***
     '''
-    return np.real(0.25*np.einsum('ijk,ijk->k',np.conj(eivecs),np.einsum('ij,kjl->kil',proj_matrix,eivecs)))
+    # return np.real(
+    #     0.25 * np.einsum('ijk,ijk->k', 
+    #                      np.conj(eivecs),
+    #                      np.einsum('ij,kjl->kil',
+    #                                proj_matrix, eivecs),
+    #                      optimize=True))
+    return np.real(0.25 * _einsum_ijk_ijk_k(np.conj(eivecs), 
+                                     _einsum_ij_kjl_kil(proj_matrix, eivecs)))
 
-def proj_mat(proj,lenbasis):
+@numba.njit(nogil=True)
+def _einsum_ij_kjl_kil(a, b):
+    ii, jj = a.shape
+    kk, _, ll = b.shape
+    out = np.empty((kk, ii, ll), np.complex128)
+    for k in numba.prange(kk):
+        for i in range(ii):
+            for l in range(ll):
+                out[k,i,l] = 0.
+                for j in range(jj):
+                    out[k,i,l] += a[i,j] * b[k,j,l]
+    return out
+@numba.njit(nogil=True)
+def _einsum_ijk_ijk_k(a, b):
+    ii, jj, kk = a.shape
+    out = np.zeros(kk, np.complex128)
+    for i in range(ii):
+        for j in range(jj):
+            for k in range(kk):
+                out[k] += a[i,j,k] * b[i,j,k]
+    return out
+
+@numba.njit(nogil=True)
+def proj_mat(proj, lenbasis):
     '''
     Define projection matrix for fast evaluation of the partial density of states
     weighting. As the projector here is diagonal, and represents a Hermitian 
@@ -435,22 +488,22 @@ def proj_mat(proj,lenbasis):
     
     ***
     '''
-    projector = np.identity(lenbasis,dtype=complex)
-    
-    proj_vect = np.zeros(lenbasis,dtype=complex)
-
-    if len(np.shape(proj))==1:
-        proj_vect[proj] = 1/(len(proj))**0.5
-    
-    elif len(np.shape(proj))==2:
-        proj_vect[proj[:,0]] = proj[:,1]
-        proj_vect/=np.sqrt(np.einsum('i,i',np.conj(proj_vect),proj_vect))
-    
-    projector*=np.real(proj_vect)
-    
+    projector = np.eye(lenbasis, dtype=np.complex128)
+    proj_vect = np.zeros(lenbasis, dtype=np.complex128)
+    if proj.ndim == 1:
+        # proj_vect[proj] = 1/np.sqrt(len(proj))
+        for p in proj:
+            # proj_vect[p] = 1/np.sqrt(len(proj))
+            proj_vect[p] = 1
+    elif proj.ndim == 2:
+        for i in proj[:,0]:
+            proj_vect[i] = proj[i,1]
+        # proj_vect[proj[:,0]] = proj[:,1]
+        proj_vect /= np.sqrt(np.inner(np.conj(proj_vect), proj_vect))
+    projector *= np.real(proj_vect)
     return projector
 
-def pdos_tetra(TB,NE,NK,proj):
+def pdos_tetra(TB, NE, NK, proj, ax=None, **plot_kw):
     
     '''
     Partial density of states calculation. Follows same tetrahedra method, 
@@ -480,36 +533,62 @@ def pdos_tetra(TB,NE,NK,proj):
     
     ***
     '''
-    
-    projection_matrix = proj_mat(proj,len(TB.basis))
-    
-    kpts,tetra = tetrahedra.mesh_tetra(TB.avec,NK)
-    print('k tetrahedra defined')
+    kpts, tetra = tetrahedra.mesh_tetra(TB.avec, NK)
     TB.Kobj.kpts = kpts
     TB.solve_H()
-    print('Diagonalization complete')
-    Elin = np.linspace(TB.Eband.min(),TB.Eband.max(),NE)
+    Elin = np.linspace(TB.Eband.min(), TB.Eband.max(), NE)
+    if isinstance(proj, list):
+        with tqdm_numba(desc='Calculating pDOS', total=len(tetra)) as pb:
+            DOS, pDOS = iterate_mult_pdos_tetra(
+                len(tetra), len(TB.basis), len(proj), TB.Eband, Elin, TB.Evec,
+                numba.typed.List([proj_mat(p, len(TB.basis)) for p in proj]),
+                tetra, pb,
+            )
+    else:
+        with tqdm_numba(desc='Calculating pDOS', total=len(tetra)) as pb:
+            DOS, pDOS = iterate_pdos_tetra(
+                len(tetra), len(TB.basis), TB.Eband, Elin, TB.Evec,
+                proj_mat(proj, len(TB.basis)), tetra, pb,
+            )
+    if ax is None:
+        ax = plt.gca()
+    ax.plot(Elin, DOS, **plot_kw)
+    if isinstance(proj, list):
+        for i in range(len(proj)):
+            ax.plot(Elin, pDOS[i,:], **plot_kw)
+    else:
+        ax.plot(Elin, pDOS, **plot_kw)
+    return Elin, pDOS, DOS
     
-    DOS = np.zeros(len(Elin))
-    pDOS = np.zeros(len(Elin))
-    for ki in range(len(tetra)):
-        eivecs = TB.Evec[tetra[ki],:,:]
-        projection_avg = proj_avg(eivecs,projection_matrix)
-        sys.stdout.write('\r'+progress_bar(ki+1,len(tetra)))
-        for bi in range(len(TB.basis)): #iterate over all bands
-            DOS_tetra = band_contribution(TB.Eband[tetra[ki]][:,bi],Elin,len(tetra))
-            pDOS += DOS_tetra*projection_avg[bi]
+@numba.njit(nogil=True)
+def iterate_pdos_tetra(len_tetra, len_basis, Eband, Elin, Evec, projmat, tetra, progress_hook):
+    DOS = np.zeros_like(Elin, dtype=np.float64)
+    pDOS = np.zeros_like(Elin, dtype=np.float64)
+    for ki in range(len_tetra):
+        projection_avg = proj_avg(Evec[tetra[ki],:,:], projmat)
+        for bi in range(len_basis):
+            DOS_tetra = band_contribution(Eband[tetra[ki]][:,bi], Elin, len_tetra)
+            pDOS += DOS_tetra * projection_avg[bi]
             DOS += DOS_tetra
-    
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.plot(Elin,DOS)
-    ax.plot(Elin,pDOS)
-    
-    return Elin,pDOS,DOS
-    
-   
+        progress_hook.update(1)
+    return DOS, pDOS
+@numba.njit(nogil=True)
+def iterate_mult_pdos_tetra(len_tetra, len_basis, len_proj, Eband, Elin, Evec, projmat_list, tetra, progress_hook):
+    DOS = np.zeros_like(Elin, dtype=np.float64)
+    pDOS = np.zeros((len_proj, len(Elin)), dtype=np.float64)
+    for ki in range(len_tetra):
+        projection_avg = [proj_avg(Evec[tetra[ki],:,:], pm) for pm in projmat_list]
+        for bi in range(len_basis):
+            DOS_tetra = band_contribution(Eband[tetra[ki]][:,bi], Elin, len_tetra)
+            DOS += DOS_tetra
+            for pi in numba.prange(len_proj):
+                pDOS[pi,:] += DOS_tetra * projection_avg[pi][bi]
+        # projection_avg = np.zeros(len_basis, dtype=np.float64)
+        progress_hook.update(1)
+    return DOS, pDOS
+
 ##############################-------D(E)---------#############################
+@numba.njit(nogil=True)
 def dos_func(energy,epars):
     '''
 
@@ -528,25 +607,33 @@ def dos_func(energy,epars):
     
     ***
     '''
-    print(epars)
-    return np.piecewise(energy,[energy<epars[0],(epars[0]<=energy)*(energy<epars[1]),(epars[1]<=energy)*(energy<epars[2]),(epars[2]<=energy)*(energy<epars[3]),energy>=epars[3]],[e_out,e_12,e_23,e_34,e_out],epars)
+    output = np.zeros_like(energy)
+    for i in range(len(energy)):
+        if (energy[i] < epars[0]) or (energy[i] >= epars[3]):
+            output[i] = 0
+        elif energy[i] < epars[1]:
+            output[i] = e_12(energy[i], epars)
+        elif energy[i] < epars[2]:
+            output[i] = e_23(energy[i], epars)
+        elif energy[i] < epars[3]:
+            output[i] = e_34(energy[i], epars)
+    return output
 
+@numba.njit(nogil=True)
+def e_12(energy, epars):
+    return epars[4] / epars[5] * 3 * (energy - epars[0])**2 / (epars[1] - epars[0]) / (epars[2]-epars[0]) / (epars[3]-epars[0])
 
-def e_out(energy,epars):
-    return np.zeros(len(energy))
+@numba.njit(nogil=True)
+def e_23(energy, epars):
+    e21, e31, e41, e42, e32 = epars[1] - epars[0], epars[2] - epars[0], epars[3] - epars[0], epars[3] - epars[1], epars[2] - epars[1]
+    e2 = energy - epars[1]
+    return epars[4] / epars[5] / e31 / e41 * (3 * e21 + 6 * e2 - 3 * (e31 + e42) / (e32 * e42) * e2**2)
 
-def e_12(energy,epars):
-    return epars[4]/epars[5]*3*(energy-epars[0])**2/(epars[1]-epars[0])/(epars[2]-epars[0])/(epars[3]-epars[0])
-
-def e_23(energy,epars):
-    e21,e31,e41,e42,e32 = epars[1]-epars[0],epars[2]-epars[0],epars[3]-epars[0],epars[3]-epars[1],epars[2]-epars[1]
-    e2 = energy-epars[1]
-    return epars[4]/epars[5]/e31/e41*(3*e21+6*e2-3*(e31+e42)/(e32*e42)*e2**2)
-
-def e_34(energy,epars):
-    return epars[4]/epars[5]*3*(epars[3]-energy)**2/(epars[3]-epars[0])/(epars[3]-epars[1])/(epars[3]-epars[2])
+@numba.njit(nogil=True)
+def e_34(energy, epars):
+    return epars[4] / epars[5] * 3 * (epars[3] - energy)**2 / (epars[3] - epars[0]) / (epars[3] - epars[1]) / (epars[3] - epars[2])
 ##############################-------D(E)---------#############################
-    
+
 
 ##############################-------n(E)---------#############################
 def find_EF_tetra_dos(TB,occ,dE,NK):
@@ -573,12 +660,12 @@ def find_EF_tetra_dos(TB,occ,dE,NK):
     
     ***
     '''
-    e_domain,n_elec = n_tetra(TB,dE,NK)
+    e_domain, n_elec = n_tetra(TB,dE,NK)
     EF = e_domain[np.where(abs(n_elec-occ)==abs(n_elec-occ).min())[0][0]]
     return EF
 
 
-def n_tetra(TB,dE,NK,plot=True):
+def n_tetra(TB,dE,NK,plot=True,ax=None):
     '''
     This function, also from the algorithm of Blochl, gives the integrated DOS
     at every given energy (so from bottom of bandstructure up to its top. This makes
@@ -604,27 +691,30 @@ def n_tetra(TB,dE,NK,plot=True):
         
     ***
     '''
-    kpts,tetra = tetrahedra.mesh_tetra(TB.avec,NK)
+    kpts, tetra = tetrahedra.mesh_tetra(TB.avec, NK)
     TB.Kobj.kpts = kpts
     TB.solve_H()
     Elin = np.arange(TB.Eband.min(),TB.Eband.max(),dE)
-    n_elect = np.zeros(len(Elin))
-    for ki in range(len(tetra)):
-        E_tmp = TB.Eband[tetra[ki]]
-        for bi in range(len(TB.basis)): #iterate over all bands
-            Eband = sorted(E_tmp[:,bi])
-            args = (*Eband,1,len(tetra))
-            n_elect += n_func(Elin,args)
+    with tqdm_numba(desc='Calculating integrated DOS', total=len(tetra)) as pb:
+        n_elect = _calc_n_tetra(len(tetra), len(TB.basis), TB.Eband, Elin, tetra, pb)
     if plot:
-        fig = plt.figure()
-        ax = fig.add_subplot(111)
+        if ax is None:
+            ax = plt.gca()
         ax.plot(Elin,n_elect)               
-    return Elin,n_elect    
+    return Elin,n_elect
 
+@numba.njit(nogil=True)
+def _calc_n_tetra(len_tetra, len_basis, Eband, Elin, tetra, progress_hook):
+    n_elect = np.zeros_like(Elin, dtype=np.float64)
+    for ki in range(len_tetra):
+        E_tmp = Eband[tetra[ki]]
+        for bi in range(len_basis): #iterate over all bands
+            n_elect += band_occupation(E_tmp[:,bi], Elin, len_tetra)
+        progress_hook.update(1)
+    return n_elect
 
-
+@numba.njit(nogil=True)
 def n_func(energy,epars):
-
     '''
     Piecewise function for evaluating contribution of tetrahedra to electronic
     occupation number
@@ -643,26 +733,31 @@ def n_func(energy,epars):
         
     ***
     '''
-    
-    
-    return np.piecewise(energy,[energy<epars[0],(epars[0]<=energy)*(energy<epars[1]),(epars[1]<=energy)*(energy<epars[2]),(epars[2]<=energy)*(energy<epars[3]),energy>=epars[3]],[n1,n12,n23,n34,n4],epars)
+    output = np.zeros_like(energy)
+    for i in range(len(energy)):
+        if energy[i] < epars[0]:
+            output[i] = 0
+        elif energy[i] < epars[1]:
+            output[i] = n12(energy[i], epars)
+        elif energy[i] < epars[2]:
+            output[i] = n23(energy[i], epars)
+        elif energy[i] < epars[3]:
+            output[i] = n34(energy[i], epars)
+        else:
+            output[i] = epars[4] / epars[5]
+    return output
 
-def n1(energy,epars):
-    return np.zeros(len(energy))
-
+@numba.njit(nogil=True)
 def n12(energy,epars):
     return epars[4]/epars[5]*(energy-epars[0])**3/(epars[1]-epars[0])/(epars[2]-epars[0])/(epars[3]-epars[0])
-
+@numba.njit(nogil=True)
 def n23(energy,epars):
     e21,e31,e41,e42,e32 = epars[1]-epars[0],epars[2]-epars[0],epars[3]-epars[0],epars[3]-epars[1],epars[2]-epars[1]
     e2 = energy-epars[1]
     return epars[4]/epars[5]*(1/(e31*e41))*(e21**2+3*e21*(e2)+3*e2**2-(e31+e42)/(e32*e42)*(e2**3))
-
+@numba.njit(nogil=True)
 def n34(energy,epars):
     return epars[4]/epars[5]*(1-(epars[3]-energy)**3/(epars[3]-epars[0])/(epars[3]-epars[1])/(epars[3]-epars[2]))
-
-def n4(energy,epars):
-    return epars[4]/epars[5]
 
 ##############################-------n(E)---------#############################
     
