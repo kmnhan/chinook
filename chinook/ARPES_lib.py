@@ -46,6 +46,8 @@ from scipy.signal import hilbert
 
 from joblib import Parallel, delayed
 from tqdm import tqdm
+from .dos import tqdm_joblib
+from numba_progress import ProgressBar as tqdm_numba
 import numba
 import chinook.klib as K_lib
 import chinook.orbital as olib
@@ -61,7 +63,7 @@ import chinook.Ylm as Ylm
 import chinook.rotation_lib as rotlib
 import chinook.intensity_map as imap
 import chinook.tilt as tilt
-
+from .override_einsum import *
 
 
 ####PHYSICAL CONSTANTS RELEVANT TO CALCULATION#######
@@ -77,6 +79,74 @@ kb = 1.38*10**-23
 
 
 ###
+
+@numba.njit(nogil=True)
+def _M_compute_base(i, nstates, Ylm_calls, B_eval, prefactors, Ev, pks, radint_pointers,
+proj_arr, Gbasis, spin, len_spin):
+    Mtmp = np.zeros((2,3), dtype=np.complex128)
+    pref = np.multiply(
+        np.reshape(
+            np.multiply(
+                prefactors,
+                Ev[int(pks[i,0] / nstates),:,int(pks[i,0] % nstates)]
+            ), (-1, 1)), B_eval[radint_pointers])
+    Gtmp = _einsum_ij_ijkl_ikl(proj_arr, np.multiply(Ylm_calls, Gbasis))
+    if spin:
+        Mtmp[0,:] = _einsum_ij_ijk_k(pref[:len_spin], Gtmp[:len_spin])
+        Mtmp[1,:] = _einsum_ij_ijk_k(pref[len_spin:], Gtmp[len_spin:])
+    else:
+        Mtmp[0,:] = _einsum_ij_ijk_k(pref, Gtmp)
+    return Mtmp
+
+@numba.njit(nogil=True)
+def _M_compute_base_all(Mk, indices, nstates, args, radint_pointers, pks, prefactors, Ev, 
+proj_arr, Gbasis, spin, len_spin, progress_hook):
+    for i in indices:
+        pref = np.multiply(
+            np.reshape(
+                np.multiply(
+                    prefactors,
+                    Ev[int(pks[i,0] / nstates),:,int(pks[i,0] % nstates)]
+                ), (-1, 1)), args[i][1][radint_pointers])
+        Gtmp = _einsum_ij_ijkl_ikl(proj_arr, np.multiply(args[i][0], Gbasis))
+        if spin:
+            Mk[i,0,:] = _einsum_ij_ijk_k(pref[:len_spin], Gtmp[:len_spin])
+            Mk[i,1,:] = _einsum_ij_ijk_k(pref[len_spin:], Gtmp[len_spin:])
+        else:
+            Mk[i,0,:] = _einsum_ij_ijk_k(pref, Gtmp)
+        progress_hook.update(1)
+    return Mk
+
+# @numba.njit(nogil=True)
+# def _M_compute_base(nstates, Ylm_calls, i, pks, B_eval, prefactors, Ev, radint_pointers,
+# proj_arr, Gbasis, spin, len_basis):
+#     Mtmp = np.zeros((2,3), dtype=np.complex128)
+#     pref = np.multiply(
+#         np.reshape(
+#             np.multiply(
+#                 prefactors,
+#                 Ev[int(pks[i,0] / nstates),:,int(pks[i,0] % nstates)]
+#             ), (-1, 1)), B_eval[radint_pointers])  
+#     Gtmp = _einsum_ij_ijkl_ikl(proj_arr, np.multiply(Ylm_calls, Gbasis))
+#     if spin:
+#         Mtmp[0,:] = _einsum_ij_ijk_k(pref[:int(len_basis/2)], Gtmp[:int(len_basis/2)])
+#         Mtmp[1,:] = _einsum_ij_ijk_k(pref[int(len_basis/2):], Gtmp[int(len_basis/2):])
+#     else:
+#         Mtmp[0,:] = _einsum_ij_ijk_k(pref, Gtmp)
+#     return Mtmp 
+
+@numba.jit(nogil=True)
+def _calc_spectral_intensity_SE_k(I, SE, pks, M_factor, w, fermi, progress_hook):
+    for p in range(pks.shape[0]):
+        I[int(np.real(pks[p,1])),int(np.real(pks[p,2])),:] += M_factor[p]*np.imag(-1./(np.pi*(w-pks[p,3]-(SE[int(np.real(pks[p,1])),int(np.real(pks[p,2])),:]-0.00005j))))*fermi
+        progress_hook.update(1)
+    # return I
+@numba.jit(nogil=True)
+def _calc_spectral_intensity(I, SE, pks, M_factor, w, fermi, progress_hook):
+    for p in range(pks.shape[0]):
+        I[int(np.real(pks[p,1])),int(np.real(pks[p,2])),:] += M_factor[p]*np.imag(-1./(np.pi*(w-pks[p,3]-(SE-0.00005j))))*fermi
+        progress_hook.update(1)
+    # return I
 class experiment:
     '''
     The experiment object is at the centre of the ARPES matrix element 
@@ -209,7 +279,7 @@ class experiment:
         try:
             self.threads = ARPES_dict['threads']
         except KeyError:
-            self.threads = 0
+            self.threads = -1
             
     def update_pars(self,ARPES_dict,datacube=False):
         '''
@@ -414,86 +484,60 @@ class experiment:
         *return*:
             - boolean, True if function finishes successfully.
         '''      
+        self.init_datacube(ARPES_dict, diagonalize)
+
+        # print('Begin computing matrix elements: ')
+        valid_indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])# and self.cube[2][0]<=self.pks[i][3]<=self.cube[2][1])])
+
+        self.thread_Mk(self.threads, valid_indices)
+        return True
+
+    def init_datacube(self,ARPES_dict=None,diagonalize=False):
+        '''
+        This function computes the photoemission matrix elements.
+        Given a kmesh to calculate the photoemission over, the mesh is reshaped to an nx3 array and the Hamiltonian
+        diagonalized over this set of k points. The matrix elements are then calculated for each 
+        of these E-k points
+    
+        *kwargs*:
+            - **ARPES_dict**: can optionally pass a dictionary of experimental parameters, to update those defined
+            in the initialization of the *experiment* object.
+
+        *return*:
+            - boolean, True if function finishes successfully.
+        '''      
         if ARPES_dict is not None:
             self.update_pars(ARPES_dict,True)
 
         self.basis = self.rot_basis()
 
-        print('Initiate diagonalization: ')
+        # print('Initiate diagonalization: ')
         self.diagonalize(diagonalize)
-        print('Diagonalization Complete.')
+        # print('Diagonalization Complete.')
         nstates = len(self.basis)
         if self.truncate:
             self.basis,self.Ev = self.truncate_model()
-            
 
         dE = (self.cube[2][1]-self.cube[2][0])/self.cube[2][2]            
         dig_range = (self.cube[2][0]-5*dE,self.cube[2][1]+5*dE)
-           
 
         self.pks = np.array([[i,np.floor(np.floor(i/nstates)/np.shape(self.X)[1]),np.floor(i/nstates)%np.shape(self.X)[1],self.Eb[i]] for i in range(len(self.Eb)) if dig_range[0]<=self.Eb[i]<=dig_range[-1]])
         if len(self.pks)==0:
             raise ValueError('ARPES Calculation Error: no states found in energy window. Consider refining the region of interest')
 
-        self.Mk = np.zeros((len(self.pks),2,3),dtype=complex)
+        self.Mk = np.zeros((len(self.pks), 2, 3), dtype=np.complex128)
 
-        kn = (2.*me/hb**2*(self.hv+self.pks[:,3]-self.W)*q)**0.5*A
+        kn = np.sqrt(2.*me/hb**2 * (self.hv + self.pks[:,3] - self.W) * q) * A
 
         self.th = np.array([np.arccos((kn[i]**2-self.X[int(self.pks[i,1]),int(self.pks[i,2])]**2-self.Y[int(self.pks[i,1]),int(self.pks[i,2])]**2)**0.5/kn[i]) if (kn[i]**2-self.X[int(self.pks[i,1]),int(self.pks[i,2])]**2-self.Y[int(self.pks[i,1]),int(self.pks[i,2])]**2)>=0 else -1 for i in range(len(self.pks))])
 
-        
         self.prefactors = np.array([o.sigma*np.exp((-0.5/abs(self.mfp))*abs(o.depth)) for o in self.basis])
         self.Largs,self.Margs,Gmats,self.orbital_pointers = all_Y(self.basis) 
         self.Gbasis = Gmats[self.orbital_pointers]
         self.proj_arr = projection_map(self.basis)
         
         rad_dict = {'hv':self.hv,'W':self.W,'rad_type':self.rad_type,'rad_args':self.rad_args,'phase_shifts':self.phase_shifts}
-        self.Bfuncs,self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,dig_range)
-
-        # print('Begin computing matrix elements: ')
-        valid_indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])# and self.cube[2][0]<=self.pks[i][3]<=self.cube[2][1])])
-
-        # self.thread_Mk(30,valid_indices)
-        if True:
-            self.thread_Mk(-1, valid_indices)
-        else:
-            self.serial_Mk(valid_indices)
-
-        # print('\nDone matrix elements')
-        return True
-    
-    # @numba.njit()
-    def _M_compute_base(self, nstates, Ylm_calls, i):
-        Mtmp = np.zeros((2,3), dtype=np.complex128)
-        B_eval = np.array([[b[0](self.pks[i,3]),b[1](self.pks[i,3])] for b in self.Bfuncs])
-        pref = np.einsum('i,ij->ij',np.einsum('i,i->i',self.prefactors,self.Ev[int(self.pks[i,0]/nstates),:,int(self.pks[i,0]%nstates)]),B_eval[self.radint_pointers])  
-        Gtmp = np.einsum('ij,ijkl->ikl',self.proj_arr,np.einsum('ijkl,ijkl->ijkl',Ylm_calls,self.Gbasis))
-        if self.spin:
-            Mtmp[0,:] = np.einsum('ij,ijk->k',pref[:int(len(self.basis)/2)],Gtmp[:int(len(self.basis)/2)])
-            Mtmp[1,:] = np.einsum('ij,ijk->k',pref[int(len(self.basis)/2):],Gtmp[int(len(self.basis)/2):])
-        else:
-            Mtmp[0,:] = np.einsum('ij,ijk->k',pref,Gtmp)
-        return Mtmp
-
-    def M_compute(self,i):
-        '''
-        The core method called during matrix element computation.
-        
-        *args*:
-            - **i**: integer, index and energy of state
-        
-        *return*:
-            - **Mtmp**: numpy array (2x3) of complex float corresponding to the matrix element
-              projection for dm = -1,0,1 (columns) and spin down or up (rows) for a given
-              state in k and energy.
-        '''
-        nstates = len(self.TB.basis)
-        Ylm_calls = Yvect(
-            self.Largs, self.Margs, self.th[i], 
-            self.ph[int(self.pks[i,0]/nstates)]
-        )[self.orbital_pointers]
-        return self._M_compute_base(nstates=nstates, Ylm_calls=Ylm_calls, i=i)
-    
+        self.Bfuncs, self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,dig_range)
     # def M_compute(self,i):
     #     '''
     #     The core method called during matrix element computation.
@@ -524,23 +568,45 @@ class experiment:
                    
     #     return Mtmp
     
+    # def serial_Mk(self,indices):
+    #     '''
+    #     Run matrix element on a single thread, directly modifies the *Mk* attribute.
+        
+    #     *args*:
+    #         - **indices**: list of all state indices for execution; restricting states
+    #          in *cube_indx* to those within the desired window     
+    #     '''
+    #     for ii in indices:
+    #         sys.stdout.write('\r'+progress_bar(ii+1,len(self.pks)))
+
+    #         self.Mk[ii,:,:]+=self.M_compute(ii)
     
     
-    
-    def serial_Mk(self,indices):
+    def M_compute(self, i, nstates, **calc_kw):
         '''
-        Run matrix element on a single thread, directly modifies the *Mk* attribute.
+        The core method called during matrix element computation.
         
         *args*:
-            - **indices**: list of all state indices for execution; restricting states
-             in *cube_indx* to those within the desired window     
-        '''
-        for ii in indices:
-            sys.stdout.write('\r'+progress_bar(ii+1,len(self.pks)))
-
-            self.Mk[ii,:,:]+=self.M_compute(ii)
+            - **i**: integer, index and energy of state
         
-    def thread_Mk(self, N, indices):
+        *return*:
+            - **Mtmp**: numpy array (2x3) of complex float corresponding to the matrix element
+              projection for dm = -1,0,1 (columns) and spin down or up (rows) for a given
+              state in k and energy.
+        '''
+        Ylm_calls = Yvect(
+            self.Largs, self.Margs, self.th[i],
+            self.ph[int(self.pks[i,0] / nstates)]
+        )[self.orbital_pointers]
+        B_eval = np.array([
+            [b[0](self.pks[i,3]), b[1](self.pks[i,3])] for b in self.Bfuncs
+        ])
+        return _M_compute_base(
+            i, nstates=nstates, Ylm_calls=Ylm_calls, B_eval=B_eval, **calc_kw
+        )
+
+
+    def thread_Mk(self, N=None, indices=None, **parallel_kw):
         '''
         Run matrix element on *N* threads using multiprocess functions, directly modifies the *Mk*
         attribute.
@@ -554,15 +620,44 @@ class experiment:
             - **indices**: list of int, all state indices for execution; restricting 
             states in cube_indx to those within the desired window.
         '''
-        import time
-        from .dos import tqdm_joblib
-        with tqdm_joblib(tqdm(desc="Computing Matrix Elements",
-                                total=len(indices))) as pb:
-            computed = Parallel(n_jobs=N, verbose=0)(
-                delayed(self.M_compute)(ii) for ii in indices)
-        for ii in indices: self.Mk[ii,:,:] += computed[ii]
-        print('Assigned.\n')
+        if N is None: N = self.threads
+        compute_kw = dict(
+            nstates=len(self.TB.basis), prefactors=self.prefactors,
+            Ev=self.Ev, pks=self.pks, radint_pointers=self.radint_pointers,
+            proj_arr=self.proj_arr, Gbasis=self.Gbasis, spin=self.spin,
+            len_spin=int(len(self.basis)/2)
+        )
+        if indices is None:
+            indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])
+        with tqdm_joblib(tqdm(desc="Computing matrix elements",
+        # with tqdm_joblib(tqdm(desc="Computing radial integrals",
+                              total=len(indices))) as pb:
+            computed = Parallel(n_jobs=N, batch_size=int(0.5*len(indices)), **parallel_kw)(
+                delayed(self.M_compute)(i, **compute_kw) for i in indices)
+            # computed = Parallel(n_jobs=-1)(
+                # delayed(self.get_ycalls_beval)(i, len(self.TB.basis)) for i in indices)
+        # with tqdm_numba(desc='Computing matrix elements', total=len(indices)) as pb:
+        #     self.Mk = _M_compute_base_all(
+        #         self.Mk, indices, nstates=len(self.TB.basis),
+        #         args=numba.typed.List(computed),
+        #         radint_pointers=self.radint_pointers,
+        #         pks=self.pks, prefactors=self.prefactors, Ev=self.Ev,
+        #         proj_arr=self.proj_arr, Gbasis=self.Gbasis, spin=self.spin,
+        #         len_spin=int(len(self.basis)/2), progress_hook=pb,
+        #     )
+        for i in range(len(indices)):
+            self.Mk[indices[i],:,:] += computed[i]
 
+    def get_ycalls_beval(self, i, nstates):
+        Ylm_calls = Yvect(
+            self.Largs, self.Margs, self.th[i],
+            self.ph[int(self.pks[i,0] / nstates)]
+        )[self.orbital_pointers]
+        B_eval = np.array([
+            [b[0](self.pks[i,3]), b[1](self.pks[i,3])] for b in self.Bfuncs
+        ])
+        return Ylm_calls, B_eval
+        
     # @numba.njit()
     def assign_to_matrix(self, computed, ii):
         self.Mk[ii,:,:] += computed[ii]
@@ -727,7 +822,6 @@ class experiment:
         return fermi
 
     def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,**kwargs):
-        
         '''
         Take the matrix elements and build a simulated ARPES spectrum. 
         The user has several options here for the self-energy to be used,  c.f. *SE_gen()* for details.
@@ -758,62 +852,54 @@ class experiment:
             self.datacube()
             
         if ARPES_dict is not None:
-
             self.update_pars(ARPES_dict)
-        
-        
         if self.sarpes is not None:
             spin_Mk = self.sarpes_projector()
             if self.coord_type == 'momentum':
-                pol = pol_2_sph(self.pol)
-
-                M_factor = np.power(abs(np.einsum('ij,j->i',spin_Mk[:,int((self.sarpes[0]+1)/2),:],pol)),2)
+                pol = pol_2_sph(
+                    np.ascontiguousarray(self.pol, dtype=np.complex128))
+                M_factor = np.power(np.abs(
+                    np.matmul(spin_Mk[:,int((self.sarpes[0]+1)/2),:], pol)), 2)
             elif self.coord_type == 'angle':
                 all_pol = self.gen_all_pol()
-                M_factor = np.power(abs(np.einsum('ij,ij->i',spin_Mk[:,int((self.sarpes[0]+1)/2),:],all_pol)),2)
+                M_factor = np.power(np.abs(
+                    np.multiply(spin_Mk[:,int((self.sarpes[0]+1)/2),:],
+                                all_pol).sum(axis=1)), 2)
         else:
             if self.coord_type == 'momentum':
-                pol = pol_2_sph(self.pol)
-
-                M_factor = np.sum(np.power(abs(np.einsum('ijk,k->ij',self.Mk,pol)),2),axis=1)
+                pol = pol_2_sph(
+                    np.ascontiguousarray(self.pol, dtype=np.complex128))
+                M_factor = np.sum(np.power(np.abs(np.matmul(self.Mk, pol)), 2),axis=1)
             elif self.coord_type == 'angle':
                 all_pol = self.gen_all_pol()
                 M_factor = np.sum(np.power(abs(np.einsum('ijk,ik->ij',self.Mk,all_pol)),2),axis=1)                
-        
         SE = self.SE_gen()
         fermi = self.T_distribution()    
         w = np.linspace(*self.cube[2])
-        
-        I = np.zeros((self.cube[1][2],self.cube[0][2],self.cube[2][2]))
-
-        if np.shape(SE)==np.shape(I):
-            SE_k = True
-        else:
-            SE_k = False
-
-        for p in range(len(self.pks)):
-
-            if not SE_k:
-                I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:] += M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE-0.00005j))))*fermi
+        I = np.zeros((self.cube[1][2], self.cube[0][2], self.cube[2][2]))
+        with tqdm_numba(desc='Computing ARPES intensity', total=self.pks.shape[0]) as pb:
+            if np.shape(SE)==np.shape(I):
+                _calc_spectral_intensity_SE_k(I, SE, self.pks, M_factor, w, fermi, pb)
             else:
-                I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]+= M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]-0.00005j))))*fermi 
-
-
+                _calc_spectral_intensity(I, SE, self.pks, M_factor, w, fermi, pb)
+        # for p in range(self.pks.shape[0]):
+        #     if not SE_k:
+        #         I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:] += M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE-0.00005j))))*fermi
+        #     else:
+        #         I[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]+= M_factor[p]*np.imag(-1./(np.pi*(w-self.pks[p,3]-(SE[int(np.real(self.pks[p,1])),int(np.real(self.pks[p,2])),:]-0.00005j))))*fermi
         kxg = (self.cube[0][2]*self.dk/(self.cube[0][1]-self.cube[0][0]) if abs(self.cube[0][1]-self.cube[0][0])>0 else 0)
         kyg = (self.cube[1][2]*self.dk/(self.cube[1][1]-self.cube[1][0]) if abs(self.cube[1][1]-self.cube[1][0])>0 else 0)
         wg = (self.cube[2][2]*self.dE/(self.cube[2][1]-self.cube[2][0]) if abs(self.cube[2][1]-self.cube[2][0])>0 else 0)
-
         Ig = nd.gaussian_filter(I,(kyg,kxg,wg))
         
         if slice_select!=None:
-            ax_img = self.plot_intensity_map(Ig,slice_select,plot_bands,ax,**kwargs)
-        
+            self.plot_intensity_map(Ig,slice_select,plot_bands,ax,**kwargs)
         if add_map:
             self.maps.append(imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang))
         else:
             self.maps = [imap.intensity_map(len(self.maps),Ig,self.cube,self.kz,self.T,self.hv,self.pol,self.dE,self.dk,self.SE_args,self.sarpes,self.ang)]
         if slice_select:
-            return I,Ig,ax_img
+            return I,Ig
         else:
             return I,Ig
     
@@ -1007,6 +1093,7 @@ class experiment:
 ######################## SUPPORT FUNCTIONS#####################################
 ###############################################################################
 ###############################################################################
+
 def find_mean_dE(Eb):
     '''
     Find the average spacing between adjacent points along the dispersion calculated.
@@ -1042,7 +1129,6 @@ def con_ferm(ekbt):
 vf = np.vectorize(con_ferm)
 
 
-
 def pol_2_sph(pol):
     '''
     return polarization vector in spherical harmonics -- order being Y_11, Y_10, Y_1-1.
@@ -1055,14 +1141,13 @@ def pol_2_sph(pol):
     *return*:
         - numpy array of 3 complex float, transformed polarization vector.
     '''
-    M = np.sqrt(0.5)*np.array([[-1,1.0j,0],[0,0,np.sqrt(2)],[1.,1.0j,0]])
-    if len(np.shape(pol))>1:
-        return np.einsum('ij,kj->ik',M,pol).T
+    M = np.array([[-1.0/np.sqrt(2)+0.j, 0+1.0j/np.sqrt(2), 0.+0.j],
+                  [0+0.j, 0+0.j, 1+0.j],
+                  [0+1.0/np.sqrt(2), 0+1.0j/np.sqrt(2), 0+0.j]])
+    if pol.ndim > 1:
+        return pol @ M.T
     else:
-        return np.dot(M,pol)
-
-
-
+        return np.dot(M, pol)
 
 def poly(input_x,poly_args):
     '''
@@ -1189,19 +1274,15 @@ def projection_map(basis):
         - **projarr**: numpy array of complex float
 
     '''
-    
     maxproj = max([len(o.proj) for o in basis])
-    projarr = np.zeros((len(basis),maxproj),dtype=complex)
+    projarr = np.zeros((len(basis),maxproj), dtype=np.complex128)
     for ii in range(len(basis)):
         for pj in range(len(basis[ii].proj)):
             proj = basis[ii].proj[pj]
             projarr[ii,pj] = proj[0]+1.0j*proj[1]
     return projarr
 
-
-
-
-Yvect = np.vectorize(Ylm.Y,otypes=[complex])
+Yvect = np.vectorize(Ylm.Y,otypes=[np.complex128])
 
 def Gmat_make(lm,Gdictionary):
     '''

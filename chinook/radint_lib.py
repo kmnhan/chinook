@@ -84,7 +84,7 @@ def make_radint_pointer(rad_dict,basis,Eb):
     B_dictionary = fill_radint_dic(Eb,radial_funcs,rad_dict['hv'],rad_dict['W'],rad_dict['phase_shifts'],fixed)
     B_array,B_pointers = radint_dict_to_arr(B_dictionary,basis)
     
-    return B_array,B_pointers
+    return B_array, B_pointers
 
 
 def radint_dict_to_arr(Bdict,basis):

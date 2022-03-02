@@ -5,13 +5,16 @@ Created on Tue Sep  4 16:27:40 2018
 @author: rday
 """
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numba
+import numpy as np
+
 import chinook.klib as klib
 
+
+@numba.njit(nogil=True)
 def not_point(point):
     '''
-    
     Inverse of point, defined in an N-dimensional binary coordinate frame
     
     *args*:
@@ -28,7 +31,6 @@ def not_point(point):
 
 def neighbours(point):
     '''
-    
     For an unit cube, we can define the set of 3 nearest neighbours by performing
     the requisite modular sum along one of the three Cartesian axes. In this way,
     for an input point, we can extract its neighbours easily.
