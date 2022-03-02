@@ -28,7 +28,7 @@
 
 import numpy as np
 from math import factorial
-
+import numba
 
 
 projdict={"0":np.array([[1.0,0.0,0.0,0.0]]),
@@ -40,7 +40,7 @@ projdict={"0":np.array([[1.0,0.0,0.0,0.0]]),
                 "3zXY":np.array([[np.sqrt(0.5),0,3,2],[np.sqrt(0.5),0,3,-2]]),"3xXY":np.array([[-np.sqrt(0.5),0,3,3],[np.sqrt(0.5),0,3,-3]]),
                 "3yXY":np.array([[0,np.sqrt(0.5),3,3],[0,np.sqrt(0.5),3,-3]])}
           
-
+@numba.njit(nogil=True)
 def Y(l,m,theta,phi):
     '''
     Spherical harmonics, defined here up to l = 4. This allows for photoemission from
@@ -62,14 +62,11 @@ def Y(l,m,theta,phi):
         - complex float, value of spherical harmonic evaluated at theta,phi
     
     '''
-    
-    
     if l == 0:
         if m==0:
-            return 0.5*np.sqrt(1.0/np.pi)*value_one(theta,phi)
+            return 0.5*np.sqrt(1.0/np.pi)*np.ones_like(phi)
         else:
             return 0.0 
-               
     elif l == 1:
         if abs(m) == 1:
             return -np.sign(m)*0.5*np.sqrt(3.0/(2*np.pi))*np.exp(m*1.0j*phi)*np.sin(theta)
@@ -77,7 +74,6 @@ def Y(l,m,theta,phi):
             return 0.5*np.sqrt(3.0/np.pi)*np.cos(theta) 
         else:
             return 0.0
-
     elif l == 2:
         if abs(m) == 2:
             return 0.25*np.sqrt(15.0/(2*np.pi))*np.exp(m*1.0j*phi)*np.sin(theta)**2
@@ -87,7 +83,6 @@ def Y(l,m,theta,phi):
             return 0.25*np.sqrt(5/np.pi)*(3*np.cos(theta)**2-1)
         else:
             return 0.0
-
     elif l == 3:
         if abs(m) == 3:
             return -np.sign(m)*1.0/8*np.sqrt(35/np.pi)*np.exp(m*1.0j*phi)*np.sin(theta)**3
@@ -99,7 +94,6 @@ def Y(l,m,theta,phi):
             return 1.0/4*np.sqrt(7/np.pi)*(5*np.cos(theta)**3-3*np.cos(theta))
         else:
             return 0.0
-
     elif l == 4:
         if abs(m) == 4:
             return 3/16.*np.sqrt(35./2/np.pi)*np.sin(theta)**4*np.exp(m*1.0j*phi)
@@ -113,12 +107,10 @@ def Y(l,m,theta,phi):
             return 3./16.*np.sqrt(1./np.pi)*(35.*np.cos(theta)**4 - 30.*np.cos(theta)**2 + 3.0)
         else:
             return 0.0
-
     else:
         return 0.0
     
-    
-def value_one(theta,phi):
+def value_one(theta, phi):
     '''
     Flexible generation of the number 1.0, in either float or array format
 
@@ -135,14 +127,24 @@ def value_one(theta,phi):
 
     ***
     '''
-    if type(theta)==np.ndarray:
-        out =np.ones(np.shape(theta))
-    if type(phi)==np.ndarray:
-        out = np.ones(np.shape(phi))
-    elif type(theta)!=np.ndarray and type(phi)!=np.ndarray:
-        out = 1.0
-    return out
-        
+    if isinstance(phi, np.ndarray):
+        return np.ones_like(phi)
+    elif isinstance(theta, np.ndarray):
+        return np.ones_like(theta)
+    else:
+        return 1.0
+
+# LOOKUP_TABLE = np.array([
+#     1, 1, 2, 6, 24, 120, 720, 5040, 40320,
+#     362880, 3628800, 39916800, 479001600,
+#     6227020800, 87178291200, 1307674368000,
+#     20922789888000, 355687428096000, 6402373705728000,
+#     121645100408832000, 2432902008176640000], dtype='int64')
+# @numba.njit(nogil=True)
+# def fast_factorial(n):
+#     if n > 20:
+#         raise ValueError
+#     return LOOKUP_TABLE[n]
 
 def binom(a,b):
     '''
