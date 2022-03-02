@@ -30,6 +30,7 @@ import scipy.linalg
 import matplotlib.pyplot as plt
 import numba
 from tqdm import tqdm
+from numba_progress import ProgressBar as tqdm_numba
 from operator import itemgetter
 from itertools import compress
 import sys
@@ -54,9 +55,16 @@ Tight-Binding Utility module
 
 '''
 
+def zheevr_wrapper(a, *args, **kwargs):
+    w, v, *other_args, info = scipy.linalg.lapack.zheevr(a, *args, **kwargs)
+    return w, v
+
 def eigh3(a, lower=False, **kwargs):
+    # w, v = zip(*Parallel(n_jobs=-1)(
+    #     delayed(scipy.linalg.eigh)(a[i,:,:], lower=lower, **kwargs)
+    #     for i in range(a.shape[0])))
     w, v = zip(*Parallel(n_jobs=-1)(
-        delayed(scipy.linalg.eigh)(a[i,:,:], lower=lower, **kwargs)
+        delayed(zheevr_wrapper)(a[i,:,:], lower=lower, **kwargs)
         for i in range(a.shape[0])))
     return np.asarray(w), np.asarray(v)
 
@@ -67,21 +75,23 @@ def eigvalsh3(a, lower=False, **kwargs):
     return np.asarray(w)
 
 # @numba.njit(nogil=True, parallel=True)
-# def eigh3(a):
+# def eigh3(a, progress_hook):
 #     a = a.transpose((0,2,1))
 #     W = np.empty((a.shape[0], a.shape[-1]))
 #     V = np.empty_like(a)
 #     for i in numba.prange(a.shape[0]):
 #         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+#         progress_hook.update(1)
 #     return W, V
 
 # @numba.njit(nogil=True, parallel=True)
-# def eigvalsh3(a):
+# def eigvalsh3(a, progress_hook):
 #     a = a.transpose((0,2,1))
 #     W = np.empty((a.shape[0], a.shape[-1]))
 #     V = np.empty_like(a)
 #     for i in numba.prange(a.shape[0]):
 #         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+#         progress_hook.update(1)
 #     return W, V
 
 class H_me:
@@ -447,7 +457,7 @@ class TB_model:
 
         if self.Kobj is not None:
             # initialize the Hamiltonian
-            Hmat = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
+            Hmat = np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=np.complex128)
             if not self.mat_els[0].executable:
                 from .dos import tqdm_joblib
                 with tqdm_joblib(tqdm(desc="Constructing Hamiltonian",
@@ -456,6 +466,9 @@ class TB_model:
                         delayed(_get_hmat_elements)(
                             me.i, me.j, Hmat, np.array(me.H, dtype=np.complex128),
                             self.Kobj.kpts.astype(np.complex128)) for me in self.mat_els)
+                # for me in self.mat_els:
+                    # Hfunc = me.H2Hk() #transform the array above into a function of k
+                    # Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts) #populate the Hij for all k points defined
             else:
                 for me in self.mat_els:
                     # transform the array above into a function of k
@@ -466,11 +479,13 @@ class TB_model:
                 if not Eonly:
                     with tqdm_joblib(tqdm(desc="Diagonalizing over k",
                                           total=len(self.Kobj.kpts))) as pb:
+                    # with tqdm_numba(desc='Diagonalizing over k',total=Hmat.shape[0]) as pb:
                         self.Eband, self.Evec = eigh3(Hmat)
                     # self.Eband,self.Evec = eigh3(Hmat,lower=False)
                 else:
                     with tqdm_joblib(tqdm(desc="Diagonalizing over k",
                                           total=len(self.Kobj.kpts))) as pb:
+                    # with tqdm_numba(desc='Diagonalizing over k',total=Hmat.shape[0]) as pb:
                         self.Eband = eigvalsh3(Hmat)
                     # self.Eband = eigvalsh3(Hmat,lower=False)# UPLO='U'
                     self.Evec = np.array([0])
@@ -521,18 +536,18 @@ class TB_model:
         
         if ax is None:
             ax = plt.gca()
-        
-        hl_c = hline_kws.pop("color", hline_kws.pop("c", "k"))
+
+        color = kwargs.pop("color", kwargs.pop("c", "k"))
+        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
+        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
+
+        hl_c = hline_kws.pop("color", hline_kws.pop("c", color))
         hl_ls = hline_kws.pop("ls", hline_kws.pop("linestyle", "--"))
         hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", 1))
 
-        vl_c = vline_kws.pop("color", vline_kws.pop("c", "k"))
+        vl_c = vline_kws.pop("color", vline_kws.pop("c", color))
         vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
         vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.5))
-
-        color = kwargs.pop("color", kwargs.pop("c", "navy"))
-        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
-        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
 
         ax.axhline(y=0,color=hl_c,lw=hl_lw,ls=hl_ls,**hline_kws)
         for b in self.Kobj.kcut_brk:
