@@ -38,6 +38,7 @@ from scipy.special import erf
 
 import chinook.tetrahedra as tetrahedra
 
+from .override_einsum import *
 
 def dos_broad(TB,NK,NE=None,dE=None,origin = np.zeros(3), ax=None, **plot_kw):
     '''
@@ -447,28 +448,6 @@ def proj_avg(eivecs, proj_matrix):
                                      _einsum_ij_kjl_kil(proj_matrix, eivecs)))
 
 @numba.njit(nogil=True)
-def _einsum_ij_kjl_kil(a, b):
-    ii, jj = a.shape
-    kk, _, ll = b.shape
-    out = np.empty((kk, ii, ll), np.complex128)
-    for k in numba.prange(kk):
-        for i in range(ii):
-            for l in range(ll):
-                out[k,i,l] = 0.
-                for j in range(jj):
-                    out[k,i,l] += a[i,j] * b[k,j,l]
-    return out
-@numba.njit(nogil=True)
-def _einsum_ijk_ijk_k(a, b):
-    ii, jj, kk = a.shape
-    out = np.zeros(kk, np.complex128)
-    for i in range(ii):
-        for j in range(jj):
-            for k in range(kk):
-                out[k] += a[i,j,k] * b[i,j,k]
-    return out
-
-@numba.njit(nogil=True)
 def proj_mat(proj, lenbasis):
     '''
     Define projection matrix for fast evaluation of the partial density of states
@@ -636,7 +615,7 @@ def e_34(energy, epars):
 
 
 ##############################-------n(E)---------#############################
-def find_EF_tetra_dos(TB,occ,dE,NK):
+def find_EF_tetra_dos(TB, occ, dE, NK, **kwargs):
 
     '''
     Use the tetrahedron-integration method to establish the Fermi-level, for a given
@@ -660,7 +639,7 @@ def find_EF_tetra_dos(TB,occ,dE,NK):
     
     ***
     '''
-    e_domain, n_elec = n_tetra(TB,dE,NK)
+    e_domain, n_elec = n_tetra(TB, dE, NK, **kwargs)
     EF = e_domain[np.where(abs(n_elec-occ)==abs(n_elec-occ).min())[0][0]]
     return EF
 
