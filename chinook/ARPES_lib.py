@@ -279,7 +279,7 @@ class experiment:
         try:
             self.threads = ARPES_dict['threads']
         except KeyError:
-            self.threads = -1
+            self.threads = -2
             
     def update_pars(self,ARPES_dict,datacube=False):
         '''
@@ -389,7 +389,7 @@ class experiment:
         self.TB.Kobj = K_lib.kpath(k_arr)
         print(self.TB.Kobj.kpts[:,0].min(),self.TB.Kobj.kpts[:,0].max())
 #        if diagonalize:
-        self.Eb,self.Ev = self.TB.solve_H()
+        self.Eb, self.Ev = self.TB.solve_H()
 #        else:
 #            self.Eb,self.Ev = self.TB.Eband,self.TB.Evec
         
@@ -470,7 +470,7 @@ class experiment:
 ###############################################################################
 ############################################################################### 
     
-    def datacube(self,ARPES_dict=None,diagonalize=False):
+    def datacube(self, ARPES_dict=None, diagonalize=False):
         '''
         This function computes the photoemission matrix elements.
         Given a kmesh to calculate the photoemission over, the mesh is reshaped to an nx3 array and the Hamiltonian
@@ -489,10 +489,10 @@ class experiment:
         # print('Begin computing matrix elements: ')
         valid_indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])# and self.cube[2][0]<=self.pks[i][3]<=self.cube[2][1])])
 
-        self.thread_Mk(self.threads, valid_indices)
+        self.thread_Mk(N=self.threads, indices=valid_indices)
         return True
 
-    def init_datacube(self,ARPES_dict=None,diagonalize=False):
+    def init_datacube(self, ARPES_dict=None, diagonalize=False):
         '''
         This function computes the photoemission matrix elements.
         Given a kmesh to calculate the photoemission over, the mesh is reshaped to an nx3 array and the Hamiltonian
@@ -511,9 +511,7 @@ class experiment:
 
         self.basis = self.rot_basis()
 
-        # print('Initiate diagonalization: ')
         self.diagonalize(diagonalize)
-        # print('Diagonalization Complete.')
         nstates = len(self.basis)
         if self.truncate:
             self.basis,self.Ev = self.truncate_model()
@@ -532,7 +530,7 @@ class experiment:
         self.th = np.array([np.arccos((kn[i]**2-self.X[int(self.pks[i,1]),int(self.pks[i,2])]**2-self.Y[int(self.pks[i,1]),int(self.pks[i,2])]**2)**0.5/kn[i]) if (kn[i]**2-self.X[int(self.pks[i,1]),int(self.pks[i,2])]**2-self.Y[int(self.pks[i,1]),int(self.pks[i,2])]**2)>=0 else -1 for i in range(len(self.pks))])
 
         self.prefactors = np.array([o.sigma*np.exp((-0.5/abs(self.mfp))*abs(o.depth)) for o in self.basis])
-        self.Largs,self.Margs,Gmats,self.orbital_pointers = all_Y(self.basis) 
+        self.Largs,self.Margs,Gmats,self.orbital_pointers = all_Y(self.basis)
         self.Gbasis = Gmats[self.orbital_pointers]
         self.proj_arr = projection_map(self.basis)
         
@@ -611,16 +609,14 @@ class experiment:
         Run matrix element on *N* threads using multiprocess functions, directly modifies the *Mk*
         attribute.
         
-        NOTE 21/2/2019 -- this has not been optimized to show any measureable improvement over serial execution.
-        May require a more clever way to do this to get a proper speedup.
-        
         *args*:
             - **N**: int, number of threads
             
             - **indices**: list of int, all state indices for execution; restricting 
             states in cube_indx to those within the desired window.
         '''
-        if N is None: N = self.threads
+        if N is None: 
+            N = self.threads
         compute_kw = dict(
             nstates=len(self.TB.basis), prefactors=self.prefactors,
             Ev=self.Ev, pks=self.pks, radint_pointers=self.radint_pointers,
@@ -632,7 +628,14 @@ class experiment:
         with tqdm_joblib(tqdm(desc="Computing matrix elements",
         # with tqdm_joblib(tqdm(desc="Computing radial integrals",
                               total=len(indices))) as pb:
-            computed = Parallel(n_jobs=N, batch_size=int(0.5*len(indices)), **parallel_kw)(
+            if len(indices) < 1000000:
+                parallel_kw.setdefault('batch_size', int(0.5*len(indices)))
+                parallel_kw.setdefault('pre_dispatch', 'all')
+            else:
+                parallel_kw.setdefault('batch_size', 'auto')
+                parallel_kw.setdefault('pre_dispatch', '3*n_jobs')
+            
+            computed = Parallel(n_jobs=N, **parallel_kw)(
                 delayed(self.M_compute)(i, **compute_kw) for i in indices)
             # computed = Parallel(n_jobs=-1)(
                 # delayed(self.get_ycalls_beval)(i, len(self.TB.basis)) for i in indices)
@@ -821,7 +824,8 @@ class experiment:
             fermi = np.ones(self.cube[2][2])
         return fermi
 
-    def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,**kwargs):
+    def spectral(self, ARPES_dict=None, slice_select=None, add_map = False, 
+                 plot_bands=False, ax=None, **kwargs):
         '''
         Take the matrix elements and build a simulated ARPES spectrum. 
         The user has several options here for the self-energy to be used,  c.f. *SE_gen()* for details.
@@ -890,7 +894,7 @@ class experiment:
         kxg = (self.cube[0][2]*self.dk/(self.cube[0][1]-self.cube[0][0]) if abs(self.cube[0][1]-self.cube[0][0])>0 else 0)
         kyg = (self.cube[1][2]*self.dk/(self.cube[1][1]-self.cube[1][0]) if abs(self.cube[1][1]-self.cube[1][0])>0 else 0)
         wg = (self.cube[2][2]*self.dE/(self.cube[2][1]-self.cube[2][0]) if abs(self.cube[2][1]-self.cube[2][0])>0 else 0)
-        Ig = nd.gaussian_filter(I,(kyg,kxg,wg))
+        Ig = nd.gaussian_filter(I, (kyg,kxg,wg))
         
         if slice_select!=None:
             self.plot_intensity_map(Ig,slice_select,plot_bands,ax,**kwargs)
@@ -1282,7 +1286,7 @@ def projection_map(basis):
             projarr[ii,pj] = proj[0]+1.0j*proj[1]
     return projarr
 
-Yvect = np.vectorize(Ylm.Y,otypes=[np.complex128])
+Yvect = np.vectorize(Ylm.Y, otypes=[np.complex128])
 
 def Gmat_make(lm,Gdictionary):
     '''

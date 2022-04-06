@@ -33,31 +33,40 @@ from operator import itemgetter
 
 
 ##STANDARD ORBITAL PROJECTIONS IN THE BASIS OF SPHERICAL HARMONICS Y_LM
-projdict={"0":np.array([[1.0,0.0,0.0,0.0]]),
-               "1x":np.array([[-np.sqrt(0.5),0.0,1,1],[np.sqrt(0.5),0.0,1,-1]]),"1y":np.array([[0.0,np.sqrt(0.5),1,1],[0,np.sqrt(0.5),1,-1]]),"1z":np.array([[1,0,1,0]]),
-                "2xy":np.array([[0.0,-np.sqrt(0.5),2,2],[0.0,np.sqrt(0.5),2,-2]]),"2yz":np.array([[0.0,np.sqrt(0.5),2,1],[0.0,np.sqrt(0.5),2,-1]]),
-                "2xz":np.array([[-np.sqrt(0.5),0,2,1],[np.sqrt(0.5),0,2,-1]]),"2ZR":np.array([[1.0,0.0,2,0]]),"2XY":np.array([[np.sqrt(0.5),0,2,2],[np.sqrt(0.5),0,2,-2]]),
-                "3z3":np.array([[1.0,0.0,3,0]]),"3xz2":np.array([[np.sqrt(0.5),0,3,-1],[-np.sqrt(0.5),0,3,1]]),
-                "3yz2":np.array([[0,np.sqrt(0.5),3,-1],[0,np.sqrt(0.5),3,1]]),"3xzy":np.array([[0,-np.sqrt(0.5),3,2],[0,np.sqrt(0.5),3,-2]]),
-                "3zXY":np.array([[np.sqrt(0.5),0,3,2],[np.sqrt(0.5),0,3,-2]]),"3xXY":np.array([[-np.sqrt(0.5),0,3,3],[np.sqrt(0.5),0,3,-3]]),
-                "3yXY":np.array([[0,np.sqrt(0.5),3,3],[0,np.sqrt(0.5),3,-3]])}
+projdict = {
+    "0":    np.array([[1.0, 0.0, 0.0, 0.0]]), 
+    "1x":   np.array([[-np.sqrt(0.5), 0.0, 1, 1], [np.sqrt(0.5), 0.0, 1, -1]]), 
+    "1y":   np.array([[0.0, np.sqrt(0.5), 1, 1], [0, np.sqrt(0.5), 1, -1]]), 
+    "1z":   np.array([[1, 0, 1, 0]]), 
+    "2xy":  np.array([[0.0, -np.sqrt(0.5), 2, 2], [0.0, np.sqrt(0.5), 2, -2]]), 
+    "2yz":  np.array([[0.0, np.sqrt(0.5), 2, 1], [0.0, np.sqrt(0.5), 2, -1]]), 
+    "2xz":  np.array([[-np.sqrt(0.5), 0, 2, 1], [np.sqrt(0.5), 0, 2, -1]]), 
+    "2ZR":  np.array([[1.0, 0.0, 2, 0]]), 
+    "2XY":  np.array([[np.sqrt(0.5), 0, 2, 2], [np.sqrt(0.5), 0, 2, -2]]), 
+    "3z3":  np.array([[1.0, 0.0, 3, 0]]), 
+    "3xz2": np.array([[np.sqrt(0.5), 0, 3, -1], [-np.sqrt(0.5), 0, 3, 1]]), 
+    "3yz2": np.array([[0, np.sqrt(0.5), 3, -1], [0, np.sqrt(0.5), 3, 1]]), 
+    "3xzy": np.array([[0, -np.sqrt(0.5), 3, 2], [0, np.sqrt(0.5), 3, -2]]), 
+    "3zXY": np.array([[np.sqrt(0.5), 0, 3, 2], [np.sqrt(0.5), 0, 3, -2]]), 
+    "3xXY": np.array([[-np.sqrt(0.5), 0, 3, 3], [np.sqrt(0.5), 0, 3, -3]]), 
+    "3yXY": np.array([[0, np.sqrt(0.5), 3, 3], [0, np.sqrt(0.5), 3, -3]])
+}
                 
 
 ##PHYSICAL CONSTANTS##
-hb = 6.626*10**-34/(2*np.pi)
-c  = 3.0*10**8
-q = 1.602*10**-19
-A = 10.0**-10
-me = 9.11*10**-31
-mN = 1.67*10**-27
-kb = 1.38*10**-23
+hb = 6.626e-34/(2*np.pi)
+c  = 3.0e+8
+q = 1.602e-19
+A = 1e-10
+me = 9.11e-31
+mN = 1.67e-27
+kb = 1.38e-23
 
 class orbital:
     '''
     The **orbital** object carries all essential details of the elements of the
     model Hamiltonian basis, for both generation of the tight-binding model, in
     addition to the evaluation of expectation values and ARPES intensity.
-    
     '''
     
     def __init__(self,atom,index,label,pos,Z,orient=[0.0],spin=1,lam=0.0,sigma=1.0,slab_index=None):

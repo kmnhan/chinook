@@ -157,7 +157,7 @@ class H_me:
         else:
             self.H.append(H)
         
-    def H2Hk(self):  
+    def H2Hk(self):
         '''
         Transform the list of hopping elements into a Fourier-series expansion 
         of the Hamiltonian. This is run during diagonalization for each
@@ -172,7 +172,11 @@ class H_me:
         ***
         '''
         if not self.executable:
-            return lambda x: sum([complex(m[-1])*np.exp(1.0j*np.dot(x,np.array([m[0],m[1],m[2]]))) for m in self.H])
+            return lambda x: sum([
+                complex(m[-1]) * np.exp(1.0j * np.dot(
+                    x,
+                    np.array([m[0], m[1], m[2]])
+                )) for m in self.H])
         return lambda x: sum([m(x) for m in self.H])
         
     def clean_H(self):
@@ -699,7 +703,6 @@ def atom_coords(basis):
     for atoms in coord_dict:
         coord_dict[atoms] = np.array(coord_dict[atoms])
     return coord_dict
-            
        
     
     
