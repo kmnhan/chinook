@@ -346,11 +346,11 @@ class experiment:
             self.threads = ARPES_dict["threads"]
         except KeyError:
             self.threads = -2
-
-    def update_pars(self, ARPES_dict, datacube=False):
-        """
-        Several experimental parameters can be updated without re-calculating
-        the ARPES intensity explicitly. Specifically here, we can update
+            
+    def update_pars(self,ARPES_dict,datacube=False):
+        '''
+        Several experimental parameters can be updated without re-calculating 
+        the ARPES intensity explicitly. Specifically here, we can update 
         resolution in both energy and momentum, as well as temperature,
         spin-projection, self-energy function, and polarization.
 
@@ -382,7 +382,7 @@ class experiment:
 
                 - **mfp**: float, mean-free path, Angstrom
 
-        """
+        '''
         if "resolution" in ARPES_dict.keys():
             try:
                 self.dE = ARPES_dict["resolution"]["E"] / np.sqrt(
@@ -455,7 +455,7 @@ class experiment:
     
         self.TB.Kobj = K_lib.kpath(k_arr)
 #        if diagonalize:
-        self.Eb,self.Ev = self.TB.solve_H()
+        self.Eb, self.Ev = self.TB.solve_H()
 #        else:
 #            self.Eb,self.Ev = self.TB.Eband,self.TB.Evec
         
@@ -533,15 +533,15 @@ class experiment:
             return tmp_base
         else:
             return self.TB.basis
-
-    ###############################################################################
-    ###############################################################################
-    ##################  MAIN MATRIX ELEMENT EVALUATION  ###########################
-    ###############################################################################
-    ###############################################################################
-
-    def datacube(self, ARPES_dict=None, diagonalize=False):
-        """
+    
+###############################################################################    
+###############################################################################    
+##################  MAIN MATRIX ELEMENT EVALUATION  ###########################
+###############################################################################
+############################################################################### 
+    
+    def datacube(self,ARPES_dict=None,diagonalize=False):
+        '''
         This function computes the photoemission matrix elements.
         Given a kmesh to calculate the photoemission over, the mesh is reshaped to an nx3 array and the Hamiltonian
         diagonalized over this set of k points. The matrix elements are then calculated for each
@@ -553,7 +553,7 @@ class experiment:
 
         *return*:
             - boolean, True if function finishes successfully.
-        """
+        '''
         self.init_datacube(ARPES_dict, diagonalize)
 
         # print('Begin computing matrix elements: ')
@@ -563,8 +563,8 @@ class experiment:
         self.thread_Mk(N=self.threads, indices=valid_indices)
         return True
 
-    def init_datacube(self, ARPES_dict=None, diagonalize=False):
-        """
+    def init_datacube(self,ARPES_dict=None,diagonalize=False):
+        '''
         This function computes the photoemission matrix elements.
         Given a kmesh to calculate the photoemission over, the mesh is reshaped to an nx3 array and the Hamiltonian
         diagonalized over this set of k points. The matrix elements are then calculated for each
@@ -576,7 +576,7 @@ class experiment:
 
         *return*:
             - boolean, True if function finishes successfully.
-        """
+        '''
         if ARPES_dict is not None:
             self.update_pars(ARPES_dict, True)
 
@@ -635,13 +635,8 @@ class experiment:
             ]
         )
 
-        self.prefactors = np.array(
-            [
-                o.sigma * np.exp((-0.5 / abs(self.mfp)) * abs(o.depth))
-                for o in self.basis
-            ]
-        )
-        self.Largs, self.Margs, Gmats, self.orbital_pointers = all_Y(self.basis)
+        self.prefactors = np.array([o.sigma*np.exp((-0.5/abs(self.mfp))*abs(o.depth)) for o in self.basis])
+        self.Largs,self.Margs,Gmats,self.orbital_pointers = all_Y(self.basis)
         self.Gbasis = Gmats[self.orbital_pointers]
         self.proj_arr = projection_map(self.basis)
 
@@ -723,17 +718,17 @@ class experiment:
         )
 
     def thread_Mk(self, N=None, indices=None, **parallel_kw):
-        """
+        '''
         Run matrix element on *N* threads using multiprocess functions, directly modifies the *Mk*
         attribute.
-
+        
         *args*:
             - **N**: int, number of threads
 
             - **indices**: list of int, all state indices for execution; restricting
             states in cube_indx to those within the desired window.
-        """
-        if N is None:
+        '''
+        if N is None: 
             N = self.threads
         compute_kw = dict(
             nstates=len(self.TB.basis),
@@ -993,7 +988,6 @@ class experiment:
         return fermi
 
     def spectral(self,ARPES_dict=None,slice_select=None,add_map = False,plot_bands=False,ax=None,**kwargs):
-        
         '''
         Take the matrix elements and build a simulated ARPES spectrum. 
         The user has several options here for the self-energy to be used,  c.f. *SE_gen()* for details.

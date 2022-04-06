@@ -167,10 +167,10 @@ class H_me:
             self.H.append([R0, R1, R2, H])
         else:
             self.H.append(H)
-
+        
     def H2Hk(self):
-        """
-        Transform the list of hopping elements into a Fourier-series expansion
+        '''
+        Transform the list of hopping elements into a Fourier-series expansion 
         of the Hamiltonian. This is run during diagonalization for each
         matrix element index. If running a low-energy Hamiltonian, executable functions are
         simply summed for each basis index i,j, rather than computing a Fourier series. x is
@@ -181,15 +181,9 @@ class H_me:
             - lambda function of a numpy array of float of length 3
 
         ***
-        """
+        '''
         if not self.executable:
-            return lambda x: sum(
-                [
-                    complex(m[-1])
-                    * np.exp(1.0j * np.dot(x, np.array([m[0], m[1], m[2]])))
-                    for m in self.H
-                ]
-            )
+            return lambda x: sum([complex(m[-1])*np.exp(1.0j*np.dot(x,np.array([m[0],m[1],m[2]]))) for m in self.H])
         return lambda x: sum([m(x) for m in self.H])
 
     def clean_H(self):
@@ -779,3 +773,10 @@ def atom_coords(basis):
     for atoms in coord_dict:
         coord_dict[atoms] = np.array(coord_dict[atoms])
     return coord_dict
+            
+       
+    
+    
+        
+    
+    
