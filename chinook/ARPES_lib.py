@@ -419,7 +419,7 @@ class experiment:
                 self.mfp = ARPES_dict["mfp"]
 
     def diagonalize(self, diagonalize):
-        """
+        '''
         Diagonalize the Hamiltonian over the desired range of momentum, reshaping the
         band-energies into a 1-dimensional array. If the user has not selected a energy
         grain for calculation, automatically calculate this.
@@ -427,49 +427,40 @@ class experiment:
         *return*:
             None, however *experiment* attributes *X*, *Y*, *ph*, *TB.Kobj*, *Eb*, *Ev*, *cube*
             are modified.
-        """
-        if self.Vo > 0:
-
-            kn = self.hv - self.W
-            Vo_args = [self.Vo, kn]
+        '''
+        if self.Vo>0:
+            Vo_args = (self.Vo, self.hv, self.W)
         else:
-            Vo_args = None
-
-        if self.coord_type == "momentum":
+            Vo_args = [None, None, None]
+            
+        if self.coord_type=='momentum':
             x = np.linspace(*self.cube[0])
             y = np.linspace(*self.cube[1])
             X, Y = np.meshgrid(x, y)
 
             self.X = X
             self.Y = Y
-
-            k_arr, self.ph = K_lib.kmesh(self.ang, self.X, self.Y, self.kz, Vo_args)
-
-        elif self.coord_type == "angle":
-            k_arr = tilt.gen_kpoints(
-                self.hv - self.W,
-                (self.cube[0][2], self.cube[1][2]),
-                self.cube[0][:2],
-                self.cube[1][:2],
-                self.kz,
-            )
-
-            self.X = np.reshape(k_arr[:, 0], (self.cube[1][2], self.cube[0][2]))
-            self.Y = np.reshape(k_arr[:, 1], (self.cube[1][2], self.cube[0][2]))
-            print(self.X.min(), self.X.max())
-
-            self.ph = np.arctan2(k_arr[:, 1], k_arr[:, 0])
-
+            
+            k_arr,self.ph = K_lib.kmesh(self.ang,self.X,self.Y,self.kz,*Vo_args)      
+            
+    
+        elif self.coord_type=='angle':
+            k_arr = tilt.gen_kpoints(self.hv-self.W,(self.cube[0][2],self.cube[1][2]),self.cube[0][:2],self.cube[1][:2],self.kz)
+    
+            self.X = np.reshape(k_arr[:,0],(self.cube[1][2],self.cube[0][2]))
+            self.Y = np.reshape(k_arr[:,1],(self.cube[1][2],self.cube[0][2]))
+            print(self.X.min(),self.X.max())
+    
+            self.ph = np.arctan2(k_arr[:,1],k_arr[:,0])
+    
         self.TB.Kobj = K_lib.kpath(k_arr)
-        print(self.TB.Kobj.kpts[:, 0].min(), self.TB.Kobj.kpts[:, 0].max())
-        #        if diagonalize:
-        self.Eb, self.Ev = self.TB.solve_H()
-        #        else:
-        #            self.Eb,self.Ev = self.TB.Eband,self.TB.Evec
-
-        if len(self.cube[2]) == 2:
-            # user only passed the energy limits, not the grain--automate
-            # generation of the grain size
+#        if diagonalize:
+        self.Eb,self.Ev = self.TB.solve_H()
+#        else:
+#            self.Eb,self.Ev = self.TB.Eband,self.TB.Evec
+        
+        if len(self.cube[2])==2:
+            #user only passed the energy limits, not the grain--automate generation of the grain size
             band_dE_max = find_mean_dE(self.Eb)
             NE_pts = int(10 * (self.cube[2][1] - self.cube[2][0]) / band_dE_max)
             self.cube[2].append(NE_pts)
@@ -1164,7 +1155,7 @@ class experiment:
     def plot_intensity_map(
         self, plot_map, slice_select, plot_bands=False, ax=None, **kwargs
     ):
-        """
+        '''
         Plot a slice of the intensity map computed in *spectral*. The user selects either
         an array index along one of the axes, or the fixed value of interest, allowing
         either integer, or float selection.
@@ -1187,77 +1178,60 @@ class experiment:
         *return*:
 
             - **ax_img**: matplotlib axis object
-        """
-
-        if ax is None:
-            ax = plt.gca()
-        #  if ax is None:
-        #  fig,ax = plt.subplots()
-        #  fig.set_tight_layout(False)
+        '''
+             
+        if ax_img is None:
+            ax_img = plt.gca()
+         
 
         if isinstance(slice_select[0], str):
-            str_opts = [["x", "kx"], ["y", "ky"], ["energy", "w", "e"]]
+            str_opts = [['x','kx'],['y','ky'],['energy','w','e']]
             dim = 0
             for i in range(3):
                 if slice_select[0].lower() in str_opts[i]:
                     dim = i
             x = np.linspace(*self.cube[dim])
-            index = np.where(
-                abs(x - slice_select[1]) == abs(x - slice_select[1]).min()
-            )[0][0]
-            slice_select = [dim, int(index)]
+            index = np.where(abs(x-slice_select[1])==abs(x-slice_select[1]).min())[0][0]
+            slice_select = [dim,int(index)]
+             
+        
+       
+        
+        #new option
+        index_dict = {2:(0,1),1:(2,0),0:(2,1)}
+         
+        X,Y = np.meshgrid(np.linspace(*self.cube[index_dict[slice_select[0]][0]]),np.linspace(*self.cube[index_dict[slice_select[0]][1]]))
+        limits = np.zeros((3,2),dtype=int)
+        limits[:,1] = np.shape(plot_map)[1],np.shape(plot_map)[0],np.shape(plot_map)[2]
+        limits[slice_select[0]] = [slice_select[1],slice_select[1]+1]
 
-        # new option
-        index_dict = {2: (0, 1), 1: (2, 0), 0: (2, 1)}
-
-        X, Y = np.meshgrid(
-            np.linspace(*self.cube[index_dict[slice_select[0]][0]]),
-            np.linspace(*self.cube[index_dict[slice_select[0]][1]]),
-        )
-        limits = np.zeros((3, 2), dtype=int)
-        limits[:, 1] = (
-            np.shape(plot_map)[1],
-            np.shape(plot_map)[0],
-            np.shape(plot_map)[2],
-        )
-        limits[slice_select[0]] = [slice_select[1], slice_select[1] + 1]
-
-        ax_xlimit = (
-            self.cube[index_dict[slice_select[0]][0]][0],
-            self.cube[index_dict[slice_select[0]][0]][1],
-        )
-        ax_ylimit = (
-            self.cube[index_dict[slice_select[0]][1]][0],
-            self.cube[index_dict[slice_select[0]][1]][1],
-        )
-        plottable = np.squeeze(
-            plot_map[
-                limits[1, 0] : limits[1, 1],
-                limits[0, 0] : limits[0, 1],
-                limits[2, 0] : limits[2, 1],
-            ]
-        )
-        p = ax.pcolormesh(X, Y, plottable, **kwargs)
-        if plot_bands and slice_select[0] != 2:
+         
+        ax_xlimit = (self.cube[index_dict[slice_select[0]][0]][0],self.cube[index_dict[slice_select[0]][0]][1])
+        ax_ylimit = (self.cube[index_dict[slice_select[0]][1]][0],self.cube[index_dict[slice_select[0]][1]][1])
+        plottable  = np.squeeze(plot_map[limits[1,0]:limits[1,1],limits[0,0]:limits[0,1],limits[2,0]:limits[2,1]])
+        p = ax_img.pcolormesh(X,Y,plottable,**kwargs)
+        if plot_bands and slice_select[0]!=2:
             k = np.linspace(*self.cube[index_dict[slice_select[0]][1]])
-            if slice_select[0] == 1:
-                indices = np.array(
-                    [len(k) * slice_select[1] + ii for ii in range(len(k))]
-                )
-            elif slice_select[0] == 0:
-                indices = np.array(
-                    [slice_select[1] + ii * self.cube[0][2] for ii in range(len(k))]
-                )
+            if slice_select[0]==1:                 
+                indices = np.array([len(k)*slice_select[1] + ii for ii in range(len(k))])
+            elif slice_select[0]==0:
+                indices = np.array([slice_select[1] + ii*self.cube[0][2] for ii in range(len(k))])
+            for ii in range(len(self.TB.basis)):  
+                ax_img.plot(self.TB.Eband[indices,ii],k,alpha=0.4,c='w')
+        elif plot_bands and slice_select[0] == 2:
             for ii in range(len(self.TB.basis)):
-                ax.plot(self.TB.Eband[indices, ii], k, alpha=0.4, c="w")
-        #
-        ax.set_xlim(*ax_xlimit)
-        ax.set_ylim(*ax_ylimit)
+                if self.TB.Eband[:,ii].min() <= x[slice_select[1]] and self.TB.Eband[:,ii].max() >= x[slice_select[1]]:
+                    reshape = self.TB.Eband[:,ii].reshape(np.shape(X))
+                    ax_img.contour(X,Y,reshape,levels=[x[slice_select[1]]],colors='w',alpha=0.2)
+                
+#            
+        ax_img.set_xlim(*ax_xlimit)
+        ax_img.set_ylim(*ax_ylimit)
+         
+        #  plt.colorbar(p,ax=ax_img)
+        #  plt.tight_layout()
 
-        # plt.colorbar(p,ax=ax)
-        # plt.tight_layout()
-
-        return ax
+        return ax_img
 
     def plot_gui(self):
         """
