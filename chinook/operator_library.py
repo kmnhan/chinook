@@ -288,6 +288,7 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
         print('projections need to be passed as list or array of type [index,projection]')
     
         Ovals = None
+        ax = None
         
     return Ovals, ax
     
