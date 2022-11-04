@@ -36,6 +36,7 @@ from itertools import compress
 import sys
 
 from joblib import Parallel, delayed
+from .dos import tqdm_joblib
 
 if sys.version_info < (3, 0):
     print(
@@ -61,31 +62,6 @@ Tight-Binding Utility module
 """
 
 
-def zheevr_wrapper(a, *args, **kwargs):
-    w, v, *other_args, info = scipy.linalg.lapack.zheevr(a, *args, **kwargs)
-    return w, v
-
-
-def eigh3(a, lower=False, **kwargs):
-    # w, v = zip(*Parallel(n_jobs=-1)(
-    #     delayed(scipy.linalg.eigh)(a[i,:,:], lower=lower, **kwargs)
-    #     for i in range(a.shape[0])))
-    w, v = zip(
-        *Parallel(n_jobs=-1)(
-            delayed(zheevr_wrapper)(a[i, :, :], lower=lower, **kwargs)
-            for i in range(a.shape[0])
-        )
-    )
-    return np.asarray(w), np.asarray(v)
-
-
-def eigvalsh3(a, lower=False, **kwargs):
-    w = Parallel(n_jobs=-1)(
-        delayed(scipy.linalg.eigvalsh)(a[i, :, :], lower=lower, **kwargs)
-        for i in range(a.shape[0])
-    )
-    return np.asarray(w)
-
 
 # @numba.njit(nogil=True, parallel=True)
 # def eigh3(a, progress_hook):
@@ -97,6 +73,7 @@ def eigvalsh3(a, lower=False, **kwargs):
 #         progress_hook.update(1)
 #     return W, V
 
+
 # @numba.njit(nogil=True, parallel=True)
 # def eigvalsh3(a, progress_hook):
 #     a = a.transpose((0,2,1))
@@ -106,6 +83,27 @@ def eigvalsh3(a, lower=False, **kwargs):
 #         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
 #         progress_hook.update(1)
 #     return W, V
+
+def zheevr_wrapper(a, *args, **kwargs):
+    w, v, *_, _ = scipy.linalg.lapack.zheevr(a, *args, **kwargs)
+    return w, v
+
+
+def eigh3(a, _, lower=False, **kwargs):
+    w, v = zip(
+        *Parallel(n_jobs=-1)(
+            delayed(zheevr_wrapper)(a[i, :, :], lower=int(lower), **kwargs)
+            for i in range(a.shape[0])
+        )
+    )
+    return np.asarray(w), np.asarray(v)
+
+def eigvalsh3(a, lower=False, **kwargs):
+    w = Parallel(n_jobs=-1)(
+        delayed(scipy.linalg.eigvalsh)(a[i, :, :], lower=lower, **kwargs)
+        for i in range(a.shape[0])
+    )
+    return np.asarray(w)
 
 
 class H_me:
@@ -243,14 +241,13 @@ class H_me:
         H_copy.H = [h for h in self.H]
         return H_copy
 
-
-@numba.njit(nogil=True)
-def _get_hmat_elements(i, j, Hmat, me_H, kpts):
-    Hslice = np.zeros(Hmat.shape[0], dtype=np.complex128)
-    for m in me_H:
-        Hslice += m[-1] * np.exp(1.0j * np.dot(kpts, np.ascontiguousarray(m[:3])))
-    Hmat[:, i, j] = Hslice
-
+    
+@numba.njit(nogil=True, parallel=True)
+def _fill_hamiltonian(Hmat, i_arr, j_arr, H_list, kpts, progress_hook):
+    for i in numba.prange(len(H_list)):
+        for me_H in H_list[i]:
+            Hmat[:, i_arr[i], j_arr[i]] += me_H[-1] * np.exp(1.0j * (kpts * me_H[:3]).sum(1))
+        progress_hook.update(1)
 
 class TB_model:
     """
@@ -309,7 +306,6 @@ class TB_model:
         if H_args is not None:
             if "avec" in H_args.keys():
                 self.avec = H_args["avec"]
-
             self.mat_els = self.build_ham(H_args)
             self.ijpairs = {
                 (me[1].i, me[1].j): me[0] for me in list(enumerate(self.mat_els))
@@ -374,6 +370,9 @@ class TB_model:
             try:
                 ham_list = []
                 if H_args["type"] == "SK":
+                    
+                    cutoff_ref_basis = H_args.pop("cutoff_ref_basis", False)
+                    
                     ham_list = Hlib.sk_build(
                         H_args["avec"],
                         self.basis,
@@ -382,6 +381,7 @@ class TB_model:
                         H_args["tol"],
                         H_args["renorm"],
                         H_args["offset"],
+                        cutoff_ref_basis,
                     )
                 elif H_args["type"] == "txt":
                     if "spin" in H_args.keys():
@@ -470,7 +470,9 @@ class TB_model:
             for el in hij.H:
                 Hlist.append([hij.i, hij.j, *el])
         return Hlist
+        
 
+    
     def solve_H(self, Eonly=False):
         """
         This function diagonalizes the Hamiltonian over an array of momentum vectors.
@@ -512,21 +514,18 @@ class TB_model:
                 dtype=np.complex128,
             )
             if not self.mat_els[0].executable:
-                from .dos import tqdm_joblib
-
-                with tqdm_joblib(
-                    tqdm(desc="Constructing Hamiltonian", total=len(self.mat_els))
+                
+                i_arr = np.empty(len(self.mat_els), dtype=int)
+                j_arr = np.empty(len(self.mat_els), dtype=int)
+                H_list = []
+                for i, me in enumerate(self.mat_els):
+                    i_arr[i], j_arr[i] = me.i, me.j
+                    H_list.append(np.array(me.H, dtype=np.complex128))
+                    
+                with tqdm_numba(
+                    desc="Constructing Hamiltonian", total=len(self.mat_els)
                 ) as pb:
-                    Parallel(n_jobs=-1, verbose=0, require="sharedmem")(
-                        delayed(_get_hmat_elements)(
-                            me.i,
-                            me.j,
-                            Hmat,
-                            np.array(me.H, dtype=np.complex128),
-                            self.Kobj.kpts.astype(np.complex128),
-                        )
-                        for me in self.mat_els
-                    )
+                    _fill_hamiltonian(Hmat, i_arr, j_arr, numba.typed.List(H_list), self.Kobj.kpts.astype(np.complex128), pb)
                 # for me in self.mat_els:
                 # Hfunc = me.H2Hk() #transform the array above into a function of k
                 # Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts) #populate the Hij for all k points defined
@@ -538,16 +537,13 @@ class TB_model:
                     Hmat[:, me.i, me.j] = Hfunc(self.Kobj.kpts)
             if not partition:
                 if not Eonly:
-                    with tqdm_joblib(
-                        tqdm(desc="Diagonalizing over k", total=len(self.Kobj.kpts))
-                    ) as pb:
-                        # with tqdm_numba(desc='Diagonalizing over k',total=Hmat.shape[0]) as pb:
-                        self.Eband, self.Evec = eigh3(Hmat)
-                    # self.Eband,self.Evec = eigh3(Hmat,lower=False)
+                    # with tqdm_numba(desc="Diagonalizing over k",
+                    # total=len(self.Kobj.kpts)) as pb:
+                    with tqdm_joblib(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
+                        self.Eband, self.Evec = eigh3(Hmat, pb)
+                        # self.Eband, self.Evec = eigh3(Hmat)
                 else:
-                    with tqdm_joblib(
-                        tqdm(desc="Diagonalizing over k", total=len(self.Kobj.kpts))
-                    ) as pb:
+                    with tqdm_joblib(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
                         # with tqdm_numba(desc='Diagonalizing over k',total=Hmat.shape[0]) as pb:
                         self.Eband = eigvalsh3(Hmat)
                     # self.Eband = eigvalsh3(Hmat,lower=False)# UPLO='U'
@@ -607,13 +603,13 @@ class TB_model:
         ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
         lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
 
-        hl_c = hline_kws.pop("color", hline_kws.pop("c", color))
+        hl_c = hline_kws.pop("color", hline_kws.pop("c", "k"))
         hl_ls = hline_kws.pop("ls", hline_kws.pop("linestyle", "--"))
-        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", 1))
+        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", .75))
 
-        vl_c = vline_kws.pop("color", vline_kws.pop("c", color))
+        vl_c = vline_kws.pop("color", vline_kws.pop("c", "k"))
         vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
-        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.5))
+        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.25))
 
         ax.axhline(y=0, color=hl_c, lw=hl_lw, ls=hl_ls, **hline_kws)
         for b in self.Kobj.kcut_brk:
