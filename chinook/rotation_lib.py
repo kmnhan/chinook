@@ -9,10 +9,11 @@ Various functions relevant to rotations
 
 """
 import numpy as np
+import numba
 import scipy.linalg
 from math import atan2
 
-    
+
 def Euler(rotation):
     '''
     Euler rotation angle generation, Z-Y-Z convention, as defined for a user-defined
@@ -35,6 +36,10 @@ def Euler(rotation):
         rot_mat = rotation
     else:
         rot_mat = Rodrigues_Rmat(rotation[0],rotation[1])
+    return Euler_jit(rot_mat)
+
+@numba.njit(cache=True)
+def Euler_jit(rot_mat):
     if abs(rot_mat[2,2])!=1.0:
         Euler_A = atan2(rot_mat[1,2],rot_mat[0,2])
         Euler_y = atan2(rot_mat[2,1],-rot_mat[2,0])
@@ -113,7 +118,6 @@ def rotate_v1v2(v1,v2):
         Rmat = np.identity(3)
         Rmat[2,2] = -1.0
     return Rmat
-
 
 def Rodrigues_Rmat(nvec,theta):
     '''
