@@ -41,6 +41,7 @@ from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.cm as cm
 import chinook.klib as K_lib
 import chinook.Ylm as Ylm
+from chinook.FS_tetra import fermi_surface_2D
 rcParams.update({'font.size':14})
 
 '''
@@ -59,13 +60,15 @@ def cmaps():
     '''
     Plot utility, define a few cmaps which scale to transparent at their zero values
     '''
-    cmaps = [cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
+    cmaps=[cm.Blues,cm.Greens,cm.Reds,cm.Purples,cm.Greys]
     cname = ['Blues_alpha','Greens_alpha','Reds_alpha','Purples_alpha','Greys_alpha']
     nc = 256
+
     for ii in range(len(cmaps)):
         col_arr = cmaps[ii](range(nc))
         col_arr[:,-1] = np.linspace(0,1,nc)
         map_obj = LinearSegmentedColormap.from_list(name=cname[ii],colors=col_arr)
+        
         plt.register_cmap(cmap=map_obj)
 
     for name in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu',
@@ -291,13 +294,12 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
         ax = None
         
     return Ovals, ax
+    return Ovals, ax
     
     
 
 
-def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
-           plot=True, ax=None, widthplot=True, widthplot_method='scatter', widthscale=1, cbar=False,
-           cmap=None, color='b', rasterized=False, line_kws={}, **kwargs):
+def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,widthplot=True,widthplot_method='scatter',widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,line_kws={},**kwargs):
     
     '''
     
@@ -358,26 +360,28 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
             except TypeError:
                 print('ERROR! Please include a K-object, or diagonalize your tight-binding model over a k-path first to initialize the eigenvectors')
                 return None
-    
+            
+   
+       
     right_product = np.einsum('ij,ljm->lim',Operator,TB.Evec)
     O_vals = np.einsum('ijk,ijk->ik',np.conj(TB.Evec),right_product)
     O_vals = np.real(O_vals) #any Hermitian operator must have real-valued expectation value--discard any imaginary component
     if degen:
         O_vals = degen_Ovals(O_vals,TB.Eband)
 
-    if ax is None:
-        # fig, ax = plt.subplots(1,1)
-        # fig.set_tight_layout(False)
-        ax = plt.gca()
 
-    for b in TB.Kobj.kcut_brk:
-        ax.axvline(x = b,color = 'k',ls='-',lw=0.5)
-    
-    if cmap is None:               
-        if (O_vals.min() < 0) & (O_vals.max() > 0):
-            cmap = 'seismic_alpha'
-        else:
-            cmap = 'Blues_alpha'
+    if plot:
+        if ax is None:
+            ax = plt.gca()
+
+        for b in TB.Kobj.kcut_brk:
+            ax.axvline(x = b,color = 'k',ls='-',lw=0.5)
+        
+        if cmap is None:               
+            if (O_vals.min() < 0) & (O_vals.max() > 0):
+                cmap = 'seismic_alpha'
+            else:
+                cmap = 'Blues_alpha'
 
     if vlims is None:
         vlims = (O_vals.min()-(O_vals.max()-O_vals.min())/10.0,O_vals.max()+(O_vals.max()-O_vals.min())/10.0)
@@ -436,7 +440,6 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
                 O_line.set_rasterized(True)
             O_line.set_zorder(0)
 
-
         ax.axis([TB.Kobj.kcut[0],TB.Kobj.kcut[-1],Elims[0],Elims[1]])
         ax.set_xticks(TB.Kobj.kcut_brk)
         ax.set_xticklabels(TB.Kobj.labels)
@@ -444,7 +447,9 @@ def O_path(Operator, TB, Kobj=None, vlims=None, Elims=None, degen=False,
             plt.colorbar(O_line,ax=ax)
         ax.set_ylabel("Energy (eV)")
         
-    return O_vals,ax
+        return O_vals,ax
+    else:
+        return O_vals,None
 
 
 def degen_Ovals(Oper_exp,Energy):
@@ -480,7 +485,50 @@ def degen_Ovals(Oper_exp,Energy):
                 start = bi
                 counter = 1
                 val = Energy[ki,bi]
-    return O_copy                
+    return O_copy  
+
+def operator_projected_fermi_surface(TB, matrix, npts=100, kfix=(2,0), energy=0, shift=np.array([0,0,0]),degen=True, fig=None, cmap=cm.rainbow, scale=20):
+    """
+    Simple 2D-projected FS with operator expectation values plot over the FS contours.
+
+    *args*:
+        - **TB**: tight-binding object
+
+        - **matrix**: numpy array of complex float, operator matrix
+
+        - **npts**: number of k-points along axes of BZ
+
+        - **kfix**: fixed index of BZ. First value is projected reciprocal lattice vector (0,1,2), second is value (inverse Angstrom)
+
+        - **energy**: float, fixed value of energy (EF = 0 )
+
+        - **shift**: numpy array of 3 float. Shift of centre of plot
+
+        - **degen**: boolean, average over degenerate bands
+
+        - **fig**: matplotlib figure to plot on top of
+
+        - **cmap**: colourmap
+
+        - **scale**: multiplier for scatterplot point sizes
+    """
+    FS = fermi_surface_2D(TB, npts=npts, kfix=kfix, energy=energy, shift=shift, do_plot = False)
+    Ovals = {}
+    if fig is None:
+        fig, ax = plt.subplots(1,1)
+
+    for fi in FS:
+        kpoints = np.zeros((len(FS[fi]),3))
+        kpoints[:,kfix[0]] = kfix[1]
+        kpoints[:,(kfix[0]+1)%3] = FS[fi][:,0]
+        kpoints[:,(kfix[0]+2)%3] = FS[fi][:,1]
+        TB.Kobj.kpts = kpoints
+        TB.solve_H()
+        expectation,_ = O_path(matrix, TB, plot=False, degen=degen)
+        Ovals[fi] = expectation[:,fi]
+        fig.axes[0].scatter(FS[fi][:,0], FS[fi][:,1], c=Ovals[fi],s=Ovals[fi]*scale, cmap=cmap)
+
+    return fig              
 
 def O_surf(O,TB,ktuple,Ef,tol,vlims=(0,0),ax=None):
     

@@ -38,10 +38,8 @@ import sys
 from joblib import Parallel, delayed
 from .dos import tqdm_joblib
 
-if sys.version_info < (3, 0):
-    print(
-        "Warning: This software requires Python 3.0 or higher. Please update your Python instance before proceeding"
-    )
+if sys.version_info<(3,0):
+    print('Warning: This software requires Python 3.0 or higher. Please update your Python instance before proceeding')
 else:
     import chinook.H_library as Hlib
 
@@ -56,10 +54,10 @@ except ModuleNotFoundError:
     ps_found = False
 
 
-"""
+'''
 Tight-Binding Utility module
 
-"""
+'''
 
 
 
@@ -169,10 +167,10 @@ class H_me:
             self.H.append([R0, R1, R2, H])
         else:
             self.H.append(H)
-
+        
     def H2Hk(self):
-        """
-        Transform the list of hopping elements into a Fourier-series expansion
+        '''
+        Transform the list of hopping elements into a Fourier-series expansion 
         of the Hamiltonian. This is run during diagonalization for each
         matrix element index. If running a low-energy Hamiltonian, executable functions are
         simply summed for each basis index i,j, rather than computing a Fourier series. x is
@@ -183,15 +181,9 @@ class H_me:
             - lambda function of a numpy array of float of length 3
 
         ***
-        """
+        '''
         if not self.executable:
-            return lambda x: sum(
-                [
-                    complex(m[-1])
-                    * np.exp(1.0j * np.dot(x, np.array([m[0], m[1], m[2]])))
-                    for m in self.H
-                ]
-            )
+            return lambda x: sum([complex(m[-1])*np.exp(1.0j*np.dot(x,np.array([m[0],m[1],m[2]]))) for m in self.H])
         return lambda x: sum([m(x) for m in self.H])
 
     def clean_H(self):
@@ -304,8 +296,9 @@ class TB_model:
         self.basis = basis
         #        self.ijpairs = {}
         if H_args is not None:
-            if "avec" in H_args.keys():
-                self.avec = H_args["avec"]
+            if 'avec' in H_args.keys():
+                self.avec = H_args['avec']
+        
             self.mat_els = self.build_ham(H_args)
             self.ijpairs = {
                 (me[1].i, me[1].j): me[0] for me in list(enumerate(self.mat_els))
@@ -369,36 +362,18 @@ class TB_model:
         if type(H_args) == dict:
             try:
                 ham_list = []
-                if H_args["type"] == "SK":
-                    
-                    cutoff_ref_basis = H_args.pop("cutoff_ref_basis", False)
-                    
-                    ham_list = Hlib.sk_build(
-                        H_args["avec"],
-                        self.basis,
-                        H_args["V"],
-                        H_args["cutoff"],
-                        H_args["tol"],
-                        H_args["renorm"],
-                        H_args["offset"],
-                        cutoff_ref_basis,
-                    )
-                elif H_args["type"] == "txt":
-                    if "spin" in H_args.keys():
-                        if H_args["spin"]["bool"]:
-                            Nonsite = len(self.basis) // 2
-                    ham_list = Hlib.txt_build(
-                        H_args["filename"],
-                        H_args["cutoff"],
-                        H_args["renorm"],
-                        H_args["offset"],
-                        H_args["tol"],
-                        Nonsite,
-                    )
-                elif H_args["type"] == "list":
-                    ham_list = H_args["list"]
-                elif H_args["type"] == "exec":
-                    ham_list = H_args["exec"]
+                if H_args['type'] == "SK":
+                    cutoff_ref_basis = H_args.pop('cutoff_ref_basis', False)
+                    ham_list = Hlib.sk_build(H_args['avec'],self.basis,H_args['V'],H_args['cutoff'],H_args['tol'],H_args['renorm'],H_args['offset'],cutoff_ref_basis)
+                elif H_args['type'] == "txt":
+                    if 'spin' in H_args.keys():
+                        if H_args['spin']['bool']:
+                            Nonsite = len(self.basis)//2
+                    ham_list = Hlib.txt_build(H_args['filename'],H_args['cutoff'],H_args['renorm'],H_args['offset'],H_args['tol'],Nonsite)
+                elif H_args['type'] == "list":
+                    ham_list = H_args['list']
+                elif H_args['type'] == 'exec':
+                    ham_list = H_args['exec']
                     executable = True
                 if "spin" in H_args.keys():
                     if H_args["spin"]["bool"]:
@@ -471,8 +446,7 @@ class TB_model:
                 Hlist.append([hij.i, hij.j, *el])
         return Hlist
         
-
-    
+        
     def solve_H(self, Eonly=False):
         """
         This function diagonalizes the Hamiltonian over an array of momentum vectors.
@@ -558,11 +532,16 @@ class TB_model:
         else:
             print("You have not defined a set of kpoints over which to diagonalize.")
             return False
-
-    def plotting(
-        self, win_min=None, win_max=None, ax=None, hline_kws={}, vline_kws={}, **kwargs
-    ):
-        """
+    def _make_hmat_parallel(self,me):
+        Hfunc = me.H2Hk()
+        # self.Hmat_temp[:,me.i,me.j] = Hfunc(self.Kobj.kpts)
+        return Hfunc(self.Kobj.kpts)[:,None]
+    def _eig_parallel(self,Hmat,splits,ni):
+        self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
+        
+    def plotting(self, win_min=None, win_max=None,
+                 ax=None, hline_kws={}, vline_kws={}, **kwargs):
+        '''
         Plotting routine for a tight-binding model evaluated over some path in k.
         If the model has not yet been diagonalized, it is done automatically
         before proceeding.
@@ -576,9 +555,9 @@ class TB_model:
             - **ax**: matplotlib Axes, for plotting on existing Axes
 
             - **hline_kws**: dictionary, kwargs for horizontal line plots
-
+            
             - **vline_kws**: dictionary, kwargs for vertical line plots
-
+            
             - **kwargs**: additional kwargs are passed onto line plots
 
         *return*:
@@ -586,7 +565,7 @@ class TB_model:
             - **ax**: matplotlib axes object
 
         ***
-        """
+        '''
         try:
             Emin, Emax = np.amin(self.Eband), np.amax(self.Eband)
         except AttributeError:
@@ -611,18 +590,12 @@ class TB_model:
         vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
         vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.25))
 
-        ax.axhline(y=0, color=hl_c, lw=hl_lw, ls=hl_ls, **hline_kws)
+        ax.axhline(y=0,color=hl_c,lw=hl_lw,ls=hl_ls,**hline_kws)
         for b in self.Kobj.kcut_brk:
-            ax.axvline(x=b, color=vl_c, lw=vl_lw, ls=vl_ls, **vline_kws)
+            ax.axvline(x=b,color=vl_c,lw=vl_lw,ls=vl_ls,**vline_kws)
         for i in range(len(self.basis)):
-            ax.plot(
-                self.Kobj.kcut,
-                np.transpose(self.Eband)[i, :],
-                color=color,
-                ls=ls,
-                lw=lw,
-                **kwargs
-            )
+            ax.plot(self.Kobj.kcut,np.transpose(self.Eband)[i,:],
+                    color=color,ls=ls,lw=lw,**kwargs)
 
         plt.xticks(self.Kobj.kcut_brk, self.Kobj.labels)
         if win_max == None or win_min == None:
@@ -634,10 +607,10 @@ class TB_model:
         ax.set_ylabel("Energy (eV)")
 
         return ax
-
-    def plot_unitcell(self, ax=None):
-
-        """
+    
+    def plot_unitcell(self,ax=None):
+        
+        '''
         Utility script for visualizing the lattice and orbital basis.
         Distinct atoms are drawn in different colours
 
@@ -650,7 +623,7 @@ class TB_model:
             - **ax**: matplotlib Axes, for further modifications to plot
 
         ***
-        """
+        '''
         edges = cell_edges(self.avec)
         coord_dict = atom_coords(self.basis)
 
@@ -782,3 +755,10 @@ def atom_coords(basis):
     for atoms in coord_dict:
         coord_dict[atoms] = np.array(coord_dict[atoms])
     return coord_dict
+            
+       
+    
+    
+        
+    
+    
