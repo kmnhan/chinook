@@ -539,11 +539,11 @@ def pdos_tetra(TB, NE, NK, proj, ax=None, **plot_kw):
         ax.plot(Elin, pDOS, **plot_kw)
     return Elin, pDOS, DOS
     
-@numba.njit(nogil=True)
+@numba.njit(nogil=True, parallel=True)
 def iterate_pdos_tetra(len_tetra, len_basis, Eband, Elin, Evec, projmat, tetra, progress_hook):
     DOS = np.zeros_like(Elin, dtype=np.float64)
     pDOS = np.zeros_like(Elin, dtype=np.float64)
-    for ki in range(len_tetra):
+    for ki in numba.prange(len_tetra):
         projection_avg = proj_avg(Evec[tetra[ki],:,:], projmat)
         for bi in range(len_basis):
             DOS_tetra = band_contribution(Eband[tetra[ki]][:,bi], Elin, len_tetra)
@@ -551,11 +551,11 @@ def iterate_pdos_tetra(len_tetra, len_basis, Eband, Elin, Evec, projmat, tetra, 
             DOS += DOS_tetra
         progress_hook.update(1)
     return DOS, pDOS
-@numba.njit(nogil=True)
+@numba.njit(nogil=True, parallel=True)
 def iterate_mult_pdos_tetra(len_tetra, len_basis, len_proj, Eband, Elin, Evec, projmat_list, tetra, progress_hook):
     DOS = np.zeros_like(Elin, dtype=np.float64)
     pDOS = np.zeros((len_proj, len(Elin)), dtype=np.float64)
-    for ki in range(len_tetra):
+    for ki in numba.prange(len_tetra):
         projection_avg = [proj_avg(Evec[tetra[ki],:,:], pm) for pm in projmat_list]
         for bi in range(len_basis):
             DOS_tetra = band_contribution(Eband[tetra[ki]][:,bi], Elin, len_tetra)
@@ -747,17 +747,56 @@ def progress_bar(N,Nmax):
     return st
 
 # https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution
+# @contextlib.contextmanager
+# def tqdm_joblib(tqdm_object):
+#     """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+#     class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+#         def __call__(self, *args, **kwargs):
+#             tqdm_object.update(n=self.batch_size)
+#             return super().__call__(*args, **kwargs)
+#     old_batch_callback = joblib.parallel.BatchCompletionCallBack
+#     joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+#     try:
+#         yield tqdm_object
+#     finally:
+#         joblib.parallel.BatchCompletionCallBack = old_batch_callback
+#         tqdm_object.close()
+
+
+
+
+from tqdm import tqdm, tqdm_notebook
 @contextlib.contextmanager
-def tqdm_joblib(tqdm_object):
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
-    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
-        def __call__(self, *args, **kwargs):
-            tqdm_object.update(n=self.batch_size)
-            return super().__call__(*args, **kwargs)
-    old_batch_callback = joblib.parallel.BatchCompletionCallBack
-    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+def tqdm_joblib(file=None, notebook=None, dynamic_ncols=True, **kwargs):
+    """Context manager to patch joblib to report into tqdm progress bar given as
+    argument"""
+    
+    if file is None:
+        file = sys.stdout
+    
+    if notebook is None:
+        if "IPython" not in sys.modules:  # IPython hasn't been imported
+            notebook = False
+        else:
+            from IPython import get_ipython
+            notebook = getattr(get_ipython(), "kernel", None) is not None
+
+        
+    if notebook:
+        tqdm_object = tqdm_notebook(iterable=None, dynamic_ncols=dynamic_ncols, file=file,  **kwargs)
+    else:
+        tqdm_object = tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file, **kwargs)
+
+    def tqdm_print_progress(self):
+        if self.n_completed_tasks > tqdm_object.n:
+            n_completed = self.n_completed_tasks - tqdm_object.n
+            tqdm_object.update(n=n_completed)
+
+    original_print_progress = joblib.parallel.Parallel.print_progress
+    joblib.parallel.Parallel.print_progress = tqdm_print_progress
+
     try:
         yield tqdm_object
     finally:
-        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        joblib.parallel.Parallel.print_progress = original_print_progress
         tqdm_object.close()
