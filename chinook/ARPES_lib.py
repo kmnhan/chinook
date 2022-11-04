@@ -66,13 +66,13 @@ from .override_einsum import *
 
 
 ####PHYSICAL CONSTANTS RELEVANT TO CALCULATION#######
-hb = 6.626 * 10**-34 / (2 * np.pi)
-c = 3.0 * 10**8
-q = 1.602 * 10**-19
-A = 10.0**-10
-me = 9.11 * 10**-31
-mN = 1.67 * 10**-27
-kb = 1.38 * 10**-23
+hb = 6.62607015e-34/2/np.pi
+c = 2.99792458e+8
+q = 1.602176634e-19
+A = 1e-10
+me = 9.10938370e-31
+mN = 1.674927498e-27
+kb = 1.380649e-23
 
 
 ###
@@ -93,7 +93,7 @@ def _M_compute_base(
     spin,
     len_spin,
 ):
-    Mtmp = np.zeros((2, 3), dtype=np.complex128)
+    Mtmp = np.empty((2, 3), dtype=np.complex128)
     pref = np.multiply(
         np.reshape(
             np.multiply(
@@ -109,6 +109,8 @@ def _M_compute_base(
         Mtmp[1, :] = _einsum_ij_ijk_k(pref[len_spin:], Gtmp[len_spin:])
     else:
         Mtmp[0, :] = _einsum_ij_ijk_k(pref, Gtmp)
+        Mtmp[1, :] = (0 + 0j, 0 + 0j, 0 + 0j)
+
     return Mtmp
 
 
@@ -167,40 +169,25 @@ def _M_compute_base_all(
 #         Mtmp[0,:] = _einsum_ij_ijk_k(pref, Gtmp)
 #     return Mtmp
 
+@numba.njit(nogil=True, cache=True)
+def spectral_function(w, bareband, SE):
+    return np.imag(-1.0 / (np.pi * (w - bareband - (SE - 0.00005j))))
 
-@numba.jit(nogil=True)
+
+@numba.jit(nogil=True, cache=True)
 def _calc_spectral_intensity_SE_k(I, SE, pks, M_factor, w, fermi, progress_hook):
     for p in range(pks.shape[0]):
-        I[int(np.real(pks[p, 1])), int(np.real(pks[p, 2])), :] += (
-            M_factor[p]
-            * np.imag(
-                -1.0
-                / (
-                    np.pi
-                    * (
-                        w
-                        - pks[p, 3]
-                        - (
-                            SE[int(np.real(pks[p, 1])), int(np.real(pks[p, 2])), :]
-                            - 0.00005j
-                        )
-                    )
-                )
-            )
-            * fermi
-        )
+        i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
+        I[i, j, :] += M_factor[p] * spectral_function(w, pks[p, 3], SE[i, j :]) * fermi
         progress_hook.update(1)
     # return I
 
 
-@numba.jit(nogil=True)
+@numba.jit(nogil=True, parallel=True, cache=True)
 def _calc_spectral_intensity(I, SE, pks, M_factor, w, fermi, progress_hook):
-    for p in range(pks.shape[0]):
-        I[int(np.real(pks[p, 1])), int(np.real(pks[p, 2])), :] += (
-            M_factor[p]
-            * np.imag(-1.0 / (np.pi * (w - pks[p, 3] - (SE - 0.00005j))))
-            * fermi
-        )
+    for p in numba.prange(pks.shape[0]):
+        i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
+        I[i, j, :] +=  M_factor[p] * spectral_function(w, pks[p, 3], SE)* fermi
         progress_hook.update(1)
     # return I
 
@@ -286,6 +273,11 @@ class experiment:
                     'Error: must pass either a momentum (X,Y,E) or angle (Tx,Ty,E) range of interest to "cube" key of input dictionary.'
                 )
                 return None
+            
+        try:
+            self.barebands_range = ARPES_dict["barebands_range"]
+        except KeyError:
+            self.barebands_range = None
 
         self.hv = ARPES_dict["hv"]
         self.dE = ARPES_dict["resolution"]["E"] / np.sqrt(
@@ -605,7 +597,8 @@ class experiment:
             self.basis, self.Ev = self.truncate_model()
 
         dE = (self.cube[2][1] - self.cube[2][0]) / self.cube[2][2]
-        dig_range = (self.cube[2][0] - 5 * dE, self.cube[2][1] + 5 * dE)
+        if self.barebands_range is None:
+            self.barebands_range = (self.cube[2][0] - 5 * dE, self.cube[2][1] + 5 * dE)
 
         self.pks = np.array(
             [
@@ -616,7 +609,8 @@ class experiment:
                     self.Eb[i],
                 ]
                 for i in range(len(self.Eb))
-                if dig_range[0] <= self.Eb[i] <= dig_range[-1]
+                if self.barebands_range[0] <= self.Eb[i] <= self.barebands_range[-1]
+                # if True
             ]
         )
         if len(self.pks) == 0:
@@ -668,7 +662,7 @@ class experiment:
             "phase_shifts": self.phase_shifts,
         }
         self.Bfuncs, self.radint_pointers = radint_lib.make_radint_pointer(
-            rad_dict, self.basis, dig_range
+            rad_dict, self.basis, self.barebands_range
         )
 
     # def M_compute(self,i):
@@ -763,20 +757,15 @@ class experiment:
         )
         if indices is None:
             indices = np.array([i for i in range(len(self.pks)) if (self.th[i] >= 0)])
-        with tqdm_joblib(
-            tqdm(
-                desc="Computing matrix elements",
-                # with tqdm_joblib(tqdm(desc="Computing radial
-                # integrals",
-                total=len(indices),
-            )
-        ) as pb:
-            if len(indices) < 1000000:
-                parallel_kw.setdefault("batch_size", int(0.5 * len(indices)))
-                parallel_kw.setdefault("pre_dispatch", "all")
-            else:
-                parallel_kw.setdefault("batch_size", "auto")
-                parallel_kw.setdefault("pre_dispatch", "3*n_jobs")
+        with tqdm_joblib( desc="Computing matrix elements", total=len(indices)) as _:
+            # if len(indices) < 1000000:
+            #     parallel_kw.setdefault("batch_size", int(0.5 * len(indices)))
+            #     parallel_kw.setdefault("pre_dispatch", "all")
+            # else:
+            parallel_kw.setdefault("batch_size", round(len(indices)/100))
+            # parallel_kw.setdefault("pre_dispatch", "10*n_jobs")
+            parallel_kw.setdefault("pre_dispatch", "5*n_jobs")
+            # parallel_kw.setdefault("mmap_mode", None)
 
             computed = Parallel(n_jobs=N, **parallel_kw)(
                 delayed(self.M_compute)(i, **compute_kw) for i in indices
@@ -1075,7 +1064,7 @@ class experiment:
         else:
             if self.coord_type == "momentum":
                 pol = pol_2_sph(np.ascontiguousarray(self.pol, dtype=np.complex128))
-                M_factor = np.sum(np.power(np.abs(np.matmul(self.Mk, pol)), 2), axis=1)
+                M_factor = np.sum(np.power(np.abs(self.Mk @ pol), 2), axis=1)
             elif self.coord_type == "angle":
                 all_pol = self.gen_all_pol()
                 M_factor = np.sum(
@@ -1112,7 +1101,7 @@ class experiment:
             if abs(self.cube[2][1] - self.cube[2][0]) > 0
             else 0
         )
-        Ig = nd.gaussian_filter(I, (kyg, kxg, wg))
+        Ig = nd.gaussian_filter(I, (kyg, kxg, wg), truncate=20)
 
         if slice_select is not None:
             self.plot_intensity_map(Ig, slice_select, plot_bands, ax, **kwargs)
@@ -1443,9 +1432,9 @@ def con_ferm(ekbt):
     *return*:
         - **fermi**: float, evaluation of Fermi function.
     """
-    fermi = 0.0
-    if ekbt < 709:
-        fermi = 1.0 / (np.exp(ekbt) + 1)
+    # fermi = 0.0
+    # if ekbt < 709:
+    fermi = 1.0 / (np.exp(ekbt) + 1)
     return fermi
 
 
@@ -1770,9 +1759,11 @@ def gen_SE_KK(w, SE_args):
         roi = np.where(wf < w.min())[0][-1] - 10, np.where(wf > w.max())[0][0] + 10
 
         im_interp = interp1d(wf[roi[0] : roi[1]], imSE[roi[0] : roi[1]])
-        re_interp = interp1d(wf[roi[0] : roi[1]], reSE[roi[0] : roi[1]])
-
-        return re_interp(w) + im_interp(w) * 1.0j
+        # re_interp = interp1d(wf[roi[0] : roi[1]], reSE[roi[0] : roi[1]])
+        # return re_interp(w) + im_interp(w) * 1.0j
+        im_interp = np.interp(w, wf[roi[0] : roi[1]], imSE[roi[0] : roi[1]])
+        re_interp = np.interp(w, wf[roi[0] : roi[1]], reSE[roi[0] : roi[1]])
+        return re_interp + im_interp * 1.0j
 
 
 ###

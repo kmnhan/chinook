@@ -31,6 +31,8 @@ import numpy as np
 import chinook.SlaterKoster as SK
 import chinook.rotation_lib as rot_lib
 import chinook.Ylm as Ylm
+from joblib import Parallel, delayed
+import numba
 
 
 hb = 6.626*10**-34/(2*np.pi)
@@ -108,7 +110,107 @@ def txt_build(filename,cutoff,renorm,offset,tol,Nonsite):
             
     return Hlist
 
-def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset):
+def _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis):
+
+        
+    Vdict,cutoff,pts = cluster_init(Vdict,cutoff,avec) #build region of lattice points, containing at least the cutoff distance
+    individual_cutoff = False
+    
+    
+    if isinstance(Vdict, dict):
+        # cutoff given as dict, added Aug. 2022
+        individual_cutoff = True
+        V = Vdict["onsite"]
+        if not isinstance(V,dict):
+            V = V[0]
+    else:
+        V = Vdict[0]
+    if len(basis)!=len(cutoff_ref_basis):
+        raise ValueError("ref basis must match size of original basis")
+    
+    if basis[0].spin!=basis[-1].spin: #only calculate explicitly for a single spin species
+        brange = int(len(basis)/2)
+    else:
+        brange = len(basis)
+        
+        
+    basis2 = cutoff_ref_basis
+
+    SK_matrices = SK.SK_full(basis[:brange]) #generate the generalized Slater-Koster matrices, as functions of R and potential V
+    index_orbitals = index_ordering(basis[:brange]) #define the indices associated with the various orbital shells in the basis,
+    index_orbitals2 = index_ordering(basis2[:brange]) 
+    H_raw = on_site(basis[:brange],V,offset) #fill in the on-site energies
+    
+
+    # for append in Parallel(n_jobs=-1)(delayed(add_to_Hraw)(index_orbitals,SK_matrices, i1, i2, Vdict, cutoff, individual_cutoff, pts, avec, tol) for i1 in index_orbitals for i2 in index_orbitals):
+    #     H_raw += append
+
+    for i1, j1 in zip(index_orbitals, index_orbitals2):
+        for i2, j2 in zip(index_orbitals, index_orbitals2):
+            if index_orbitals[i1][index_orbitals[i1]>-1].min()<=index_orbitals[i2][index_orbitals[i2]>-1].min():
+                o1o2_0 = (i1[0],i2[0],i1[1],i2[1],i1[2],i2[2])
+                o1o2 = (j1[0],j2[0],j1[1],j2[1],j1[2],j2[2])
+                R12_0 = (np.array(i2[3:6])-np.array(i1[3:6]))
+                R12 = (np.array(j2[3:6])-np.array(j1[3:6]))
+                SKmat = SK_matrices[o1o2_0]
+                
+                cutoff_with_z = False
+                if individual_cutoff:
+                    try:
+                        cutoff_vals = cutoff[f"{int(j1[0])}{int(j2[0])}"]
+                        Vdict_vals = Vdict[f"{int(j1[0])}{int(j2[0])}"]
+                        try:
+                            cutoff_vals_z = cutoff[f"{int(j1[0])}{int(j2[0])}z"]
+                            cutoff_with_z = True
+                        except KeyError:
+                            pass
+                    except KeyError:
+                        cutoff_vals = cutoff[f"{int(j2[0])}{int(j1[0])}"]
+                        Vdict_vals = Vdict[f"{int(j2[0])}{int(j1[0])}"]
+                        try:
+                            cutoff_vals_z = cutoff[f"{int(j2[0])}{int(j1[0])}z"]
+                            cutoff_with_z = True
+                        except KeyError:
+                            pass
+                else:
+                    cutoff_vals = cutoff
+                    Vdict_vals = Vdict
+                
+        
+                for p in pts: #iterate over the points in the cluster
+                    Rij = R12 + np.dot(p,avec) # reference
+                    Rij_0 = R12_0 + np.dot(p,avec) # true
+                    Rijn = np.linalg.norm(Rij) #compute norm of the vector
+                    Rijn_0 = np.linalg.norm(Rij_0) #compute norm of the vector
+#                   
+                    if 0<Rijn<cutoff_vals[-1]: #only proceed if within the cutoff distance
+                        if cutoff_with_z:
+                            Rijz = np.abs(Rij[-1])
+                            if Rijz > cutoff_vals_z[-1] or Rijz == 0:
+                                continue
+                            # print(Rijz)
+                            # print(cutoff_vals_z)
+                            V = Vdict_vals[np.where(Rijz>=cutoff_vals_z)[0][-1]]
+                        else:
+                            V = Vdict_vals[np.where(Rijn>=cutoff_vals)[0][-1]]
+                    
+                        Vlist = Vlist_gen(V,o1o2)
+                        if Vlist is None:
+                            continue
+                        elif len(Vlist)==0:
+                            continue
+                        Euler_A,Euler_B,Euler_y = rot_lib.Euler(rot_lib.rotate_v1v2(Rij,np.array([0,0,1])))
+
+                        SKvals = mirror_SK([vi for vi in Vlist])
+                        SKmat_num = SKmat(Euler_A,Euler_B,Euler_y,SKvals) #explicitly compute the relevant Hopping matrix for this vector and these shells
+                        if abs(SKmat_num).max()>tol:
+
+                            append = mat_els(Rij_0,SKmat_num * Rijn_0 / Rijn,tol,index_orbitals[i1],index_orbitals[i2])
+                            # append = mat_els(Rij,SKmat_num * Rijn_0 / Rijn,tol,index_orbitals[i1],index_orbitals[i2])
+                            H_raw = H_raw + append
+    return H_raw #finally return the list of Hamiltonian matrix elements
+
+def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis):
     
     '''
 
@@ -137,9 +239,22 @@ def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset):
     
     ***
     '''
+    if cutoff_ref_basis is not False:
+        return _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis)
+    
         
     Vdict,cutoff,pts = cluster_init(Vdict,cutoff,avec) #build region of lattice points, containing at least the cutoff distance
-    V = Vdict[0]
+    individual_cutoff = False
+    
+    
+    if isinstance(Vdict, dict):
+        # cutoff given as dict, added Aug. 2022
+        individual_cutoff = True
+        V = Vdict["onsite"]
+        if not isinstance(V,dict):
+            V = V[0]
+    else:
+        V = Vdict[0]
     if basis[0].spin!=basis[-1].spin: #only calculate explicitly for a single spin species
         brange = int(len(basis)/2)
     else:
@@ -147,7 +262,12 @@ def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset):
 
     SK_matrices = SK.SK_full(basis[:brange]) #generate the generalized Slater-Koster matrices, as functions of R and potential V
     index_orbitals = index_ordering(basis[:brange]) #define the indices associated with the various orbital shells in the basis,
+    # print(index_orbitals)
     H_raw = on_site(basis[:brange],V,offset) #fill in the on-site energies
+    
+
+    # for append in Parallel(n_jobs=-1)(delayed(add_to_Hraw)(index_orbitals,SK_matrices, i1, i2, Vdict, cutoff, individual_cutoff, pts, avec, tol) for i1 in index_orbitals for i2 in index_orbitals):
+    #     H_raw += append
 
     for i1 in index_orbitals:
         for i2 in index_orbitals:
@@ -155,13 +275,44 @@ def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset):
                 o1o2 = (i1[0],i2[0],i1[1],i2[1],i1[2],i2[2])
                 R12 = (np.array(i2[3:6])-np.array(i1[3:6])) 
                 SKmat = SK_matrices[o1o2]
+                
+                cutoff_with_z = False
+                if individual_cutoff:
+                    try:
+                        cutoff_vals = cutoff[f"{int(i1[0])}{int(i2[0])}"]
+                        Vdict_vals = Vdict[f"{int(i1[0])}{int(i2[0])}"]
+                        try:
+                            cutoff_vals_z = cutoff[f"{int(i1[0])}{int(i2[0])}z"]
+                            cutoff_with_z = True
+                        except KeyError:
+                            pass
+                    except KeyError:
+                        cutoff_vals = cutoff[f"{int(i2[0])}{int(i1[0])}"]
+                        Vdict_vals = Vdict[f"{int(i2[0])}{int(i1[0])}"]
+                        try:
+                            cutoff_vals_z = cutoff[f"{int(i2[0])}{int(i1[0])}z"]
+                            cutoff_with_z = True
+                        except KeyError:
+                            pass
+                else:
+                    cutoff_vals = cutoff
+                    Vdict_vals = Vdict
+                
         
                 for p in pts: #iterate over the points in the cluster
                     Rij = R12 + np.dot(p,avec)
                     Rijn = np.linalg.norm(Rij) #compute norm of the vector
 #                    
-                    if 0<Rijn<cutoff[-1]: #only proceed if within the cutoff distance
-                        V = Vdict[np.where(Rijn>=cutoff)[0][-1]]
+                    if 0<Rijn<cutoff_vals[-1]: #only proceed if within the cutoff distance
+                        if cutoff_with_z:
+                            Rijz = np.abs(Rij[-1])
+                            if Rijz > cutoff_vals_z[-1] or Rijz == 0:
+                                continue
+                            # print(Rijz)
+                            # print(cutoff_vals_z)
+                            V = Vdict_vals[np.where(Rijz>=cutoff_vals_z)[0][-1]]
+                        else:
+                            V = Vdict_vals[np.where(Rijn>=cutoff_vals)[0][-1]]
                     
                         Vlist = Vlist_gen(V,o1o2)
                         if Vlist is None:
@@ -178,7 +329,46 @@ def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset):
                             H_raw = H_raw + append
     return H_raw #finally return the list of Hamiltonian matrix elements
 
+# def add_to_Hraw(index_orbitals,SK_matrices, i1, i2, Vdict, cutoff, individual_cutoff, pts, avec, tol):
+#     if index_orbitals[i1][index_orbitals[i1]>-1].min()<=index_orbitals[i2][index_orbitals[i2]>-1].min():
+#         o1o2 = (i1[0],i2[0],i1[1],i2[1],i1[2],i2[2])
+#         R12 = (np.array(i2[3:6])-np.array(i1[3:6])) 
+#         SKmat = SK_matrices[o1o2]
+        
+#         if individual_cutoff:
+#             try:
+#                 cutoff_vals = cutoff[f"{int(i1[0])}{int(i2[0])}"]
+#                 Vdict_vals = Vdict[f"{int(i1[0])}{int(i2[0])}"]
+#             except KeyError:
+#                 cutoff_vals = cutoff[f"{int(i2[0])}{int(i1[0])}"]
+#                 Vdict_vals = Vdict[f"{int(i2[0])}{int(i1[0])}"]
+#         else:
+#             cutoff_vals = cutoff
+#             Vdict_vals = Vdict
+        
 
+#         for p in pts: #iterate over the points in the cluster
+#             Rij = R12 + np.dot(p,avec)
+#             Rijn = np.linalg.norm(Rij) #compute norm of the vector
+# #                    
+#             if 0<Rijn<cutoff_vals[-1]: #only proceed if within the cutoff distance
+#                 V = Vdict_vals[np.where(Rijn>=cutoff_vals)[0][-1]]
+            
+#                 Vlist = Vlist_gen(V,o1o2)
+#                 if Vlist is None:
+#                     continue
+#                 elif len(Vlist)==0:
+#                     continue
+#                 Euler_A,Euler_B,Euler_y = rot_lib.Euler(rot_lib.rotate_v1v2(Rij,np.array([0,0,1])))
+                
+#                 SKvals = mirror_SK([vi for vi in Vlist])
+#                 SKmat_num = SKmat(Euler_A,Euler_B,Euler_y,SKvals) #explicitly compute the relevant Hopping matrix for this vector and these shells
+#                 if abs(SKmat_num).max()>tol:
+
+#                     append = mat_els(Rij,SKmat_num,tol,index_orbitals[i1],index_orbitals[i2])
+#                     # H_raw = H_raw + append
+#                     return append
+#     return []
 
 
 def on_site(basis,V,offset):
@@ -313,6 +503,7 @@ def Vlist_gen(V,pair):
         for l_index in range(l+1):
             hopping_type = vstring+order[l_index]
             if hopping_type not in V.keys():
+                print(hopping_type)
                 V[hopping_type] = 0
     try:
         Vkeys = np.array(sorted([[l-order[vi[-1]],vi] for vi in V if vi[:-1]==vstring]))[:,1]
@@ -387,9 +578,11 @@ def cluster_init(Vdict,cutoff,avec):
     if isinstance(cutoff,(int,float)) and not isinstance(cutoff,bool):
         cutoff = np.array([0.0,cutoff])
         Vdict = [Vdict]
+    elif isinstance(cutoff, dict):
+        pt_max = max([np.ceil(np.array([max(c)/np.linalg.norm(avec[i]) for i in range(len(avec))]).max()) for c in cutoff.values()])
+        pts = region(int(pt_max)+1)
+        return Vdict, cutoff, pts
     else:
-        
-    
         if cutoff[0]>0:
             cutoff.insert(0,0)
             cutoff = np.array(cutoff)
@@ -635,26 +828,36 @@ def FM_order(basis,dS):
     
     
 
-
-
+@numba.njit(parallel=True, cache=True)
 def region(num):
+    num_symm = 2 * num + 1
+    out = np.empty((num_symm ** 3, 3), dtype=np.int16)
+    for i in numba.prange(num_symm ** 3):
+        out[i] =  [
+                np.int16(i / num_symm**2) - num,
+                np.int16(i / num_symm) % num_symm - num,
+                i % num_symm - num,
+            ]
+    return out
+
+# def region(num):
     
-    '''
+#     '''
 
-    Generate a symmetric grid of points in number of lattice vectors. 
+#     Generate a symmetric grid of points in number of lattice vectors. 
     
-    *args*:
+#     *args*:
 
-        - **num**: int, grid will have size 2*num+1 in each direction
+#         - **num**: int, grid will have size 2*num+1 in each direction
     
-    *return*:
+#     *return*:
 
-        - numpy array of size ((2*num+1)**3,3) with centre value of first entry
-        of (-num,-num,-num),...,(0,0,0),...,(num,num,num)
+#         - numpy array of size ((2*num+1)**3,3) with centre value of first entry
+#         of (-num,-num,-num),...,(0,0,0),...,(num,num,num)
 
-    ***
-    '''
-    num_symm = 2*num+1
-    return np.array([[int(i/num_symm**2)-num,int(i/num_symm)%num_symm-num,i%num_symm-num] for i in range((num_symm)**3)])
+#     ***
+#     '''
+#     num_symm = 2*num+1
+#     return np.array([[int(i/num_symm**2)-num,int(i/num_symm)%num_symm-num,i%num_symm-num] for i in range((num_symm)**3)])
 
 
