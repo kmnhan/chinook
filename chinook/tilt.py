@@ -7,7 +7,6 @@ Created on Fri Dec 28 13:33:59 2018
 """
 
 import numpy as np
-from collections import Iterable
 import matplotlib.pyplot as plt
 
 
@@ -45,7 +44,7 @@ def ang_mesh(N,th,ph):
     ***
     '''
     try:
-        if isinstance(N,Iterable):
+        if np.iterable(N):
             N_th,N_ph = int(N[0]),int(N[1])
         else:
             N_th,N_ph = int(N),int(N)
@@ -104,9 +103,9 @@ def rot_vector(vector,th,ph):
     ***
     '''
    
-    if not isinstance(th,Iterable):
+    if not np.iterable(th):
         th = np.array([th])
-    if not isinstance(ph,Iterable):     
+    if not np.iterable(ph):     
         ph = np.array([ph])
     th,ph = np.meshgrid(th,ph)
      
