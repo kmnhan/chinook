@@ -54,10 +54,10 @@ except ModuleNotFoundError:
     ps_found = False
 
 
-"""
+'''
 Tight-Binding Utility module
 
-"""
+'''
 
 
 
@@ -296,8 +296,9 @@ class TB_model:
         self.basis = basis
         #        self.ijpairs = {}
         if H_args is not None:
-            if "avec" in H_args.keys():
-                self.avec = H_args["avec"]
+            if 'avec' in H_args.keys():
+                self.avec = H_args['avec']
+        
             self.mat_els = self.build_ham(H_args)
             self.ijpairs = {
                 (me[1].i, me[1].j): me[0] for me in list(enumerate(self.mat_els))
@@ -361,36 +362,18 @@ class TB_model:
         if type(H_args) == dict:
             try:
                 ham_list = []
-                if H_args["type"] == "SK":
-                    
-                    cutoff_ref_basis = H_args.pop("cutoff_ref_basis", False)
-                    
-                    ham_list = Hlib.sk_build(
-                        H_args["avec"],
-                        self.basis,
-                        H_args["V"],
-                        H_args["cutoff"],
-                        H_args["tol"],
-                        H_args["renorm"],
-                        H_args["offset"],
-                        cutoff_ref_basis,
-                    )
-                elif H_args["type"] == "txt":
-                    if "spin" in H_args.keys():
-                        if H_args["spin"]["bool"]:
-                            Nonsite = len(self.basis) // 2
-                    ham_list = Hlib.txt_build(
-                        H_args["filename"],
-                        H_args["cutoff"],
-                        H_args["renorm"],
-                        H_args["offset"],
-                        H_args["tol"],
-                        Nonsite,
-                    )
-                elif H_args["type"] == "list":
-                    ham_list = H_args["list"]
-                elif H_args["type"] == "exec":
-                    ham_list = H_args["exec"]
+                if H_args['type'] == "SK":
+                    cutoff_ref_basis = H_args.pop('cutoff_ref_basis', False)
+                    ham_list = Hlib.sk_build(H_args['avec'],self.basis,H_args['V'],H_args['cutoff'],H_args['tol'],H_args['renorm'],H_args['offset'],cutoff_ref_basis)
+                elif H_args['type'] == "txt":
+                    if 'spin' in H_args.keys():
+                        if H_args['spin']['bool']:
+                            Nonsite = len(self.basis)//2
+                    ham_list = Hlib.txt_build(H_args['filename'],H_args['cutoff'],H_args['renorm'],H_args['offset'],H_args['tol'],Nonsite)
+                elif H_args['type'] == "list":
+                    ham_list = H_args['list']
+                elif H_args['type'] == 'exec':
+                    ham_list = H_args['exec']
                     executable = True
                 if "spin" in H_args.keys():
                     if H_args["spin"]["bool"]:
@@ -463,8 +446,7 @@ class TB_model:
                 Hlist.append([hij.i, hij.j, *el])
         return Hlist
         
-
-    
+        
     def solve_H(self, Eonly=False):
         """
         This function diagonalizes the Hamiltonian over an array of momentum vectors.
@@ -595,18 +577,18 @@ class TB_model:
 
         if ax is None:
             ax = plt.gca()
-        
+
+        color = kwargs.pop("color", kwargs.pop("c", "k"))
+        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
+        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
+
         hl_c = hline_kws.pop("color", hline_kws.pop("c", "k"))
         hl_ls = hline_kws.pop("ls", hline_kws.pop("linestyle", "--"))
-        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", 1))
+        hl_lw = hline_kws.pop("lw", hline_kws.pop("linewidth", .75))
 
         vl_c = vline_kws.pop("color", vline_kws.pop("c", "k"))
         vl_ls = vline_kws.pop("ls", vline_kws.pop("linestyle", "-"))
-        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.5))
-
-        color = kwargs.pop("color", kwargs.pop("c", "navy"))
-        ls = kwargs.pop("ls", kwargs.pop("linestyle", "-"))
-        lw = kwargs.pop("lw", kwargs.pop("linewidth", 1.5))
+        vl_lw = vline_kws.pop("lw", vline_kws.pop("linewidth", 0.25))
 
         ax.axhline(y=0,color=hl_c,lw=hl_lw,ls=hl_ls,**hline_kws)
         for b in self.Kobj.kcut_brk:
