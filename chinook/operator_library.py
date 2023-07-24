@@ -37,8 +37,10 @@ from turtle import width
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
+import matplotlib
 from matplotlib.colors import LinearSegmentedColormap
 import matplotlib.cm as cm
+import numba
 import chinook.klib as K_lib
 import chinook.Ylm as Ylm
 from chinook.FS_tetra import fermi_surface_2D
@@ -51,10 +53,13 @@ Library for different operators of possible interest in calculating, diagnostics
 
 def diverging_alpha_cmap(name:str):
     nc = 256
-    col_arr = cm.get_cmap(name)(range(nc))
+    col_arr = matplotlib.colormaps.get_cmap(name)(range(nc))
     col_arr[:,-1] = abs(np.linspace(-1,1,nc))
     map_obj = LinearSegmentedColormap.from_list(name=name+'_alpha',colors=col_arr)
-    plt.register_cmap(cmap=map_obj)
+    try:
+        matplotlib.colormaps.register(cmap=map_obj)
+    except ValueError:
+        pass
 
 def cmaps():
     '''
@@ -69,7 +74,7 @@ def cmaps():
         col_arr[:,-1] = np.linspace(0,1,nc)
         map_obj = LinearSegmentedColormap.from_list(name=cname[ii],colors=col_arr)
         
-        plt.register_cmap(cmap=map_obj)
+        matplotlib.colormaps.register(cmap=map_obj)
 
     for name in ['PiYG', 'PRGn', 'BrBG', 'PuOr', 'RdGy', 'RdBu', 'RdYlBu',
                       'RdYlGn', 'Spectral', 'coolwarm', 'bwr', 'seismic']:
@@ -294,12 +299,11 @@ def fatbs(proj,TB,Kobj=None,vlims=None,Elims=None,degen=False,**kwargs):
         ax = None
         
     return Ovals, ax
-    return Ovals, ax
     
     
 
 
-def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=None,widthplot=True,widthplot_method='scatter',widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,line_kws={},**kwargs):
+def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,lineplot=True,ax=None,widthplot=True,widthplot_method='scatter',widthscale=1,cbar=False,cmap=None,color='b',rasterized=False,line_kws={},**kwargs):
     
     '''
     
@@ -394,8 +398,9 @@ def O_path(Operator,TB,Kobj=None,vlims=None,Elims=None,degen=False,plot=True,ax=
         line_lw = line_kws.pop("lw", line_kws.pop("linewidth", 0.5))
         for p in range(np.shape(O_vals)[1]):
             from matplotlib.collections import LineCollection
-            ax.plot(TB.Kobj.kcut, TB.Eband[:,p],
-                    color=line_c, ls=line_ls, lw=line_lw, **line_kws)
+            if lineplot:
+                ax.plot(TB.Kobj.kcut, TB.Eband[:,p],
+                        color=line_c, ls=line_ls, lw=line_lw, **line_kws)
             # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],c=O_vals[:,p],cmap=cmap,marker='.',lw=0,s=80,vmin=vlims[0],vmax=vlims[1])
             # O_line=ax.scatter(TB.Kobj.kcut,TB.Eband[:,p],s=O_vals[:,p]*100,marker='.',c='blue',lw=0,vmin=vlims[0],vmax=vlims[1])
             
@@ -568,7 +573,7 @@ def O_surf(O,TB,ktuple,Ef,tol,vlims=(0,0),ax=None):
     '''
 
     
-    coords,Eb,Ev=FS(TB,ktuple,Ef,tol)
+    coords,Eb,Ev,ax=FS(TB,ktuple,Ef,tol)
     masked_Ev = np.array([Ev[int(coords[ei,2]/len(TB.basis)),:,int(coords[ei,2]%len(TB.basis))] for ei in range(len(coords))])
     Ovals = np.sum(np.conj(masked_Ev)*np.dot(O,masked_Ev.T).T,1)
 
@@ -581,7 +586,7 @@ def O_surf(O,TB,ktuple,Ef,tol,vlims=(0,0),ax=None):
     
     if vlims==(0,0):
         vlims = (Ovals.min()-(Ovals.max()-Ovals.min())/10.0,Ovals.max()+(Ovals.max()-Ovals.min())/10.0)
-    
+    vlims = np.real(np.asarray(vlims))
     if ax is None:
         fig,ax  = plt.subplots(1,1)
         
@@ -593,7 +598,7 @@ def O_surf(O,TB,ktuple,Ef,tol,vlims=(0,0),ax=None):
 
 
 
-def FS(TB,ktuple,Ef,tol,ax=None):
+def FS(TB,ktuple,Ef,tol,ax=None,diagonalized=False):
     
     '''
     A simplified form of Fermi surface extraction, for proper calculation of this,
@@ -630,27 +635,36 @@ def FS(TB,ktuple,Ef,tol,ax=None):
     x,y,z=np.linspace(*ktuple[0]),np.linspace(*ktuple[1]),ktuple[2]
     X,Y=np.meshgrid(x,y)
         
+
+
     k_arr,_ = K_lib.kmesh(0.0,X,Y,z)  
-
-    blen = len(TB.basis)    
-
     TB.Kobj = K_lib.kpath(k_arr)
-    _,_ = TB.solve_H()
-    TB.Eband = np.reshape(TB.Eband,(np.shape(TB.Eband)[-1]*np.shape(X)[0]*np.shape(X)[1])) 
-    pts = []
-    for ei in range(len(TB.Eband)):
-        if abs(TB.Eband[ei]-Ef)<tol: 
-            inds = (int(np.floor(np.floor(ei/blen)/np.shape(X)[1])),int(np.floor(ei/blen)%np.shape(X)[1]))
-            pts.append([X[inds],Y[inds],ei])
-    
-    pts = np.array(pts)
+    if not diagonalized:
+        _,_ = TB.solve_H()
+        TB.Eband = np.reshape(TB.Eband,(np.shape(TB.Eband)[-1]*np.shape(X)[0]*np.shape(X)[1])) 
+    # blen = len(TB.basis)    
+    # pts = []
+    # for ei in range(len(TB.Eband)):
+    #     if abs(TB.Eband[ei]-Ef)<tol: 
+    #         inds = (int(np.floor(np.floor(ei/blen)/np.shape(X)[1])),int(np.floor(ei/blen)%np.shape(X)[1]))
+    #         pts.append([X[inds],Y[inds],ei])
+    # pts = np.array(pts)
+    pts = _FS_jit(TB.Eband, len(TB.basis), X, Y, Ef, tol)
     if ax is None:
         fig = plt.figure()
         ax = fig.add_subplot(111)
         ax.scatter(pts[:,0],pts[:,1])
     return pts,TB.Eband,TB.Evec,ax
-    
 
+# @numba.njit(parallel=True, cache=True)
+def _FS_jit(Eband, blen, X, Y, Ef, tol):
+    pts = []
+    for ei in range(len(Eband)):
+        if abs(Eband[ei]-Ef)<tol: 
+            inds = (int(np.floor(np.floor(ei/blen)/X.shape[1])),int(np.floor(ei/blen)%X.shape[1]))
+            pts.append([X[inds],Y[inds],ei])
+    return np.asarray(pts)
+    
     
 ####################SOME STANDARD OPERATORS FOLLOW HERE: ######################
     
