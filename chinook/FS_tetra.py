@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from operator import itemgetter
 import warnings
-warnings.filterwarnings("error")
+# warnings.filterwarnings("error")
 
 import chinook.tetrahedra as tetrahedra
 from chinook.klib import bvectors
