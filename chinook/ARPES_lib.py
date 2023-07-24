@@ -140,7 +140,7 @@ def spectral_function(w, bareband, SE):
     return np.imag(-1.0 / (np.pi * (w - bareband - (SE - 0.00005j))))
 
 
-@numba.jit(nogil=True, cache=True)
+@numba.njit(nogil=True, cache=True)
 def _calc_spectral_intensity_SE_k(I, SE, pks, M_factor, w, fermi, progress_hook):
     for p in range(pks.shape[0]):
         i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
@@ -149,7 +149,7 @@ def _calc_spectral_intensity_SE_k(I, SE, pks, M_factor, w, fermi, progress_hook)
     # return I
 
 
-@numba.jit(nogil=True, parallel=True, cache=True)
+@numba.njit(nogil=True, parallel=True, cache=True)
 def _calc_spectral_intensity(I, SE, pks, M_factor, w, fermi, progress_hook):
     for p in numba.prange(pks.shape[0]):
         i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
@@ -529,9 +529,10 @@ class experiment:
             self.basis,self.Ev = self.truncate_model()
 
         dE = (self.cube[2][1]-self.cube[2][0])/self.cube[2][2]            
-        dig_range = (self.cube[2][0]-5*dE,self.cube[2][1]+5*dE)
+        if self.barebands_range is None:
+            self.barebands_range = (self.cube[2][0]-5*dE,self.cube[2][1]+5*dE)
 
-        self.pks = np.array([[i,np.floor(np.floor(i/nstates)/np.shape(self.X)[1]),np.floor(i/nstates)%np.shape(self.X)[1],self.Eb[i]] for i in range(len(self.Eb)) if dig_range[0]<=self.Eb[i]<=dig_range[-1]])
+        self.pks = np.array([[i,np.floor(np.floor(i/nstates)/np.shape(self.X)[1]),np.floor(i/nstates)%np.shape(self.X)[1],self.Eb[i]] for i in range(len(self.Eb)) if self.barebands_range[0]<=self.Eb[i]<=self.barebands_range[-1]])
         if len(self.pks)==0:
             raise ValueError('ARPES Calculation Error: no states found in energy window. Consider refining the region of interest')
 
@@ -552,7 +553,7 @@ class experiment:
         self.proj_arr = projection_map(self.basis)
         
         rad_dict = {'hv':self.hv,'W':self.W,'rad_type':self.rad_type,'rad_args':self.rad_args,'phase_shifts':self.phase_shifts}
-        self.Bfuncs, self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,dig_range)
+        self.Bfuncs, self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,self.barebands_range)
     # def M_compute(self,i):
     #     '''
     #     The core method called during matrix element computation.
@@ -642,9 +643,11 @@ class experiment:
         )
         if indices is None:
             indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])
-        with tqdm_joblib(tqdm(desc="Computing matrix elements",
-                              total=len(indices))) as _:
-            parallel_kw.setdefault('batch_size', round(len(indices)/100))
+        with tqdm_joblib(desc="Computing matrix elements",
+                              total=len(indices)) as _:
+            n_batch = round(len(indices)/100)
+            if n_batch != 0:
+                parallel_kw.setdefault('batch_size', n_batch)
             parallel_kw.setdefault('pre_dispatch', '5*n_jobs')
             computed = Parallel(n_jobs=N, **parallel_kw)(
                 delayed(self.M_compute)(i, **compute_kw) for i in indices)
