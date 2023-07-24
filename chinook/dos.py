@@ -551,6 +551,7 @@ def iterate_pdos_tetra(len_tetra, len_basis, Eband, Elin, Evec, projmat, tetra, 
             DOS += DOS_tetra
         progress_hook.update(1)
     return DOS, pDOS
+
 @numba.njit(nogil=True, parallel=True)
 def iterate_mult_pdos_tetra(len_tetra, len_basis, len_proj, Eband, Elin, Evec, projmat_list, tetra, progress_hook):
     DOS = np.zeros_like(Elin, dtype=np.float64)
@@ -765,7 +766,10 @@ def progress_bar(N,Nmax):
 
 
 
-from tqdm import tqdm, tqdm_notebook
+# from tqdm import tqdm
+# from tqdm.notebook import tqdm as tqdm_notebook
+import tqdm
+
 @contextlib.contextmanager
 def tqdm_joblib(file=None, notebook=None, dynamic_ncols=True, **kwargs):
     """Context manager to patch joblib to report into tqdm progress bar given as
@@ -783,9 +787,9 @@ def tqdm_joblib(file=None, notebook=None, dynamic_ncols=True, **kwargs):
 
         
     if notebook:
-        tqdm_object = tqdm_notebook(iterable=None, dynamic_ncols=dynamic_ncols, file=file,  **kwargs)
+        tqdm_object = tqdm.notebook.tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file,  **kwargs)
     else:
-        tqdm_object = tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file, **kwargs)
+        tqdm_object = tqdm.tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file, **kwargs)
 
     def tqdm_print_progress(self):
         if self.n_completed_tasks > tqdm_object.n:
