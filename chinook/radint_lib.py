@@ -371,17 +371,19 @@ def fill_radint_dic(Eb,orbital_funcs,hv,W=0.0,phase_shifts=None,fixed=False):
             return (radint_calc(kval,orbital_funcs) if ((hv-W)+Eb)>=0 else 0)
         elif type(Eb)==tuple:
             Brad_es=np.linspace(Eb[0],Eb[-1],5)
-            BD_coarse={}
+            BD_coarse=dict()
             for en in Brad_es:
-                k_coarse = np.sqrt(2.0*me/hb**2*((hv-W)+en)*q)*A #calculate full 3-D k vector at this surface k-point given the incident radiation wavelength, and the energy eigenvalue, note binding energy follows opposite sign convention
-                tmp_Bdic = (radint_calc(k_coarse,orbital_funcs,phase_shifts) if ((hv-W)+en)>=0 else {})
+                tmp_Bdic = dict()
+                if ((hv-W)+en)>=0:
+                    k_coarse = np.sqrt(2.0*me/hb**2*((hv-W)+en)*q)*A #calculate full 3-D k vector at this surface k-point given the incident radiation wavelength, and the energy eigenvalue, note binding energy follows opposite sign convention
+                    tmp_Bdic = radint_calc(k_coarse,orbital_funcs,phase_shifts) 
                 for b in tmp_Bdic:
                     try:
                         BD_coarse[b].append(tmp_Bdic[b])
                     except KeyError:
                         BD_coarse[b] = [tmp_Bdic[b]]
     
-            Brad = {}     
+            Brad = dict()     
             for b in BD_coarse:
                 f = interp1d(Brad_es,BD_coarse[b],kind='cubic')
                 Brad[b] = f
