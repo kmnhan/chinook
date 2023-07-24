@@ -29,7 +29,7 @@ import numpy as np
 import scipy.linalg
 import matplotlib.pyplot as plt
 import numba
-from tqdm import tqdm
+import tqdm
 from numba_progress import ProgressBar as tqdm_numba
 from operator import itemgetter
 from itertools import compress
@@ -61,8 +61,8 @@ Tight-Binding Utility module
 
 
 
-# @numba.njit(nogil=True, parallel=True)
-# def eigh3(a, progress_hook):
+# @numba.njit(nogil=True, parallel=True, cache=True)
+# def eigh3_nb(a, progress_hook):
 #     a = a.transpose((0,2,1))
 #     W = np.empty((a.shape[0], a.shape[-1]))
 #     V = np.empty_like(a)
@@ -70,17 +70,33 @@ Tight-Binding Utility module
 #         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
 #         progress_hook.update(1)
 #     return W, V
+# 
+# @numba.njit(nogil=True, parallel=True, cache=True)
+def eigh3_silent(a):
+    a = a.transpose((0,2,1))
+    W = np.empty((a.shape[0], a.shape[-1]))
+    V = np.empty_like(a)
+    for i in numba.prange(a.shape[0]):
+        W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+    return W, V
 
 
-# @numba.njit(nogil=True, parallel=True)
+# @numba.njit(nogil=True, parallel=True, cache=True)
 # def eigvalsh3(a, progress_hook):
 #     a = a.transpose((0,2,1))
 #     W = np.empty((a.shape[0], a.shape[-1]))
-#     V = np.empty_like(a)
 #     for i in numba.prange(a.shape[0]):
-#         W[i,:], V[i,:,:] = np.linalg.eigh(a[i,:,:])
+#         W[i,:] = np.linalg.eigvalsh(a[i,:,:])
 #         progress_hook.update(1)
-#     return W, V
+#     return W
+
+@numba.njit(nogil=True, parallel=True, cache=True)
+def eigvalsh3_silent(a):
+    a = a.transpose((0,2,1))
+    W = np.empty((a.shape[0], a.shape[-1]), dtype=np.float64)
+    for i in numba.prange(a.shape[0]):
+        W[i,:] = np.linalg.eigvalsh(a[i,:,:])
+    return W
 
 def zheevr_wrapper(a, *args, **kwargs):
     w, v, *_, _ = scipy.linalg.lapack.zheevr(a, *args, **kwargs)
@@ -96,7 +112,7 @@ def eigh3(a, _, lower=False, **kwargs):
     )
     return np.asarray(w), np.asarray(v)
 
-def eigvalsh3(a, lower=False, **kwargs):
+def eigvalsh3(a, _, lower=False, **kwargs):
     w = Parallel(n_jobs=-1)(
         delayed(scipy.linalg.eigvalsh)(a[i, :, :], lower=lower, **kwargs)
         for i in range(a.shape[0])
@@ -234,7 +250,13 @@ class H_me:
         return H_copy
 
     
-@numba.njit(nogil=True, parallel=True)
+@numba.njit(nogil=True, parallel=True, cache=True)
+def _fill_hamiltonian_silent(Hmat, i_arr, j_arr, H_list, kpts):
+    for i in numba.prange(len(H_list)):
+        for me_H in H_list[i]:
+            Hmat[:, i_arr[i], j_arr[i]] += me_H[-1] * np.exp(1.0j * (kpts * me_H[:3]).sum(1))
+
+@numba.njit(nogil=True, parallel=True, cache=True)
 def _fill_hamiltonian(Hmat, i_arr, j_arr, H_list, kpts, progress_hook):
     for i in numba.prange(len(H_list)):
         for me_H in H_list[i]:
@@ -364,7 +386,11 @@ class TB_model:
                 ham_list = []
                 if H_args['type'] == "SK":
                     cutoff_ref_basis = H_args.pop('cutoff_ref_basis', False)
-                    ham_list = Hlib.sk_build(H_args['avec'],self.basis,H_args['V'],H_args['cutoff'],H_args['tol'],H_args['renorm'],H_args['offset'],cutoff_ref_basis)
+                    # 230607: add 2 new options
+                    # only applied when cutoff_ref_basis == True
+                    scale_param = H_args.pop('scale_param', True)
+                    shift_lattice = H_args.pop('shift_lattice', False)
+                    ham_list = Hlib.sk_build(H_args['avec'],self.basis,H_args['V'],H_args['cutoff'],H_args['tol'],H_args['renorm'],H_args['offset'],cutoff_ref_basis, scale_param, shift_lattice)
                 elif H_args['type'] == "txt":
                     if 'spin' in H_args.keys():
                         if H_args['spin']['bool']:
@@ -377,10 +403,10 @@ class TB_model:
                     executable = True
                 if "spin" in H_args.keys():
                     if H_args["spin"]["bool"]:
-                        ham_spin_double = Hlib.spin_double(ham_list, len(self.basis))
+                        ham_spin_double = Hlib.spin_double(ham_list, len(self.basis), executable)
                         ham_list = ham_list + ham_spin_double
                         if H_args["spin"]["soc"]:
-                            ham_so = Hlib.SO(self.basis)
+                            ham_so = Hlib.SO(self.basis, executable)
                             ham_list = ham_list + ham_so
                         if "order" in H_args["spin"]:
                             if H_args["spin"]["order"] == "F":
@@ -447,7 +473,7 @@ class TB_model:
         return Hlist
         
         
-    def solve_H(self, Eonly=False):
+    def solve_H(self, Eonly=False, silent=False):
         """
         This function diagonalizes the Hamiltonian over an array of momentum vectors.
         It uses the **mat_el** objects to quickly define lambda functions of
@@ -468,18 +494,19 @@ class TB_model:
 
         ***
         """
-        partition = False
-        # if ps_found:
-        #     mem_summary = psutil.virtual_memory()
-        #     avail = mem_summary.available
-        #     size_lim = int(0.95*avail)
-        #     mem_req = int(len(self.Kobj.kpts)*len(self.basis)**2*2048)
-        #     if mem_req>size_lim:
-        #         partition = True
-        #         N_partitions = int(np.ceil(mem_req/size_lim))
-        #         splits = [j*int(np.floor(len(self.Kobj.kpts)/N_partitions)) for j in range(N_partitions)]
-        #         splits.append(len(self.Kobj.kpts))
-        #         print('Large memory load: splitting diagonalization into {:d} segments'.format(N_partitions))
+        partition=False
+        if ps_found:
+            mem_summary = psutil.virtual_memory()
+            avail = mem_summary.available
+            size_lim = int(0.85*avail)
+            # size_lim = int(1.2*avail)
+            mem_req = int(len(self.Kobj.kpts)*len(self.basis)**2*2048)
+            if mem_req>size_lim:
+                partition = True
+                N_partitions = int(np.ceil(mem_req/size_lim))
+                splits = [j*int(np.floor(len(self.Kobj.kpts)/N_partitions)) for j in range(N_partitions)]
+                splits.append(len(self.Kobj.kpts))
+        
 
         if self.Kobj is not None:
             # initialize the Hamiltonian
@@ -495,11 +522,13 @@ class TB_model:
                 for i, me in enumerate(self.mat_els):
                     i_arr[i], j_arr[i] = me.i, me.j
                     H_list.append(np.array(me.H, dtype=np.complex128))
-                    
-                with tqdm_numba(
-                    desc="Constructing Hamiltonian", total=len(self.mat_els)
-                ) as pb:
-                    _fill_hamiltonian(Hmat, i_arr, j_arr, numba.typed.List(H_list), self.Kobj.kpts.astype(np.complex128), pb)
+                if silent:
+                    _fill_hamiltonian_silent(Hmat, i_arr, j_arr, numba.typed.List(H_list), self.Kobj.kpts.astype(np.float64))
+                else:
+                    with tqdm_numba(
+                        desc="Constructing Hamiltonian", total=len(self.mat_els)
+                    ) as pb:
+                        _fill_hamiltonian(Hmat, i_arr, j_arr, numba.typed.List(H_list), self.Kobj.kpts.astype(np.float64), pb)
                 # for me in self.mat_els:
                 # Hfunc = me.H2Hk() #transform the array above into a function of k
                 # Hmat[:,me.i,me.j] = Hfunc(self.Kobj.kpts) #populate the Hij for all k points defined
@@ -510,24 +539,44 @@ class TB_model:
                     # populate the Hij for all k points defined
                     Hmat[:, me.i, me.j] = Hfunc(self.Kobj.kpts)
             if not partition:
-                if not Eonly:
-                    # with tqdm_numba(desc="Diagonalizing over k",
-                    # total=len(self.Kobj.kpts)) as pb:
-                    with tqdm_joblib(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
-                        self.Eband, self.Evec = eigh3(Hmat, pb)
-                        # self.Eband, self.Evec = eigh3(Hmat)
+                if silent:
+                    if not Eonly:
+                        self.Eband, self.Evec = eigh3(Hmat, None)
+                    else:
+                        self.Eband = eigvalsh3_silent(Hmat)
+                        # self.Eband = eigvalsh3(Hmat, None)
+                        self.Evec = np.array([0])
                 else:
-                    with tqdm_joblib(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
-                        # with tqdm_numba(desc='Diagonalizing over k',total=Hmat.shape[0]) as pb:
-                        self.Eband = eigvalsh3(Hmat)
+                    # with tqdm_numba(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
+                        if not Eonly:
+                            with tqdm_joblib(desc="Diagonalizing over k", total=len(self.Kobj.kpts)) as pb:
+                                self.Eband, self.Evec = eigh3(Hmat, pb)
+                        else:
+                            # with tqdm_numba(
+                            with tqdm_joblib(
+                                desc="Diagonalizing over k", total=len(self.Kobj.kpts)
+                            ) as pb:
+                                self.Eband = eigvalsh3(Hmat, pb)
+                                self.Evec = np.array([0])
+
                     # self.Eband = eigvalsh3(Hmat,lower=False)# UPLO='U'
+            else:
+                self.Eband = np.empty((len(self.Kobj.kpts),len(self.basis)))
+                if not Eonly:
+                    self.Evec = np.empty((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
+                if silent:
+                    itr = range(len(splits)-1)
+                else:
+                    print('Large memory load: splitting diagonalization into {:d} segments'.format(N_partitions))
+                    itr = tqdm.notebook.tqdm(range(len(splits)-1), desc="Diagonalizing over k")
+                if Eonly:
+                    for ni in itr:
+                        self.Eband[splits[ni]:splits[ni+1]] = eigvalsh3_silent(Hmat[splits[ni]:splits[ni+1]])
                     self.Evec = np.array([0])
-            # else:
-            #     self.Eband = np.zeros((len(self.Kobj.kpts),len(self.basis)))
-            #     self.Evec =  np.zeros((len(self.Kobj.kpts),len(self.basis),len(self.basis)),dtype=complex)
-            #     for ni in range(len(splits)-1):
-            #         # self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = np.linalg.eigh(Hmat[splits[ni]:splits[ni+1]],UPLO='U')
-            #         self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3(Hmat[splits[ni]:splits[ni+1]],lower=False)
+                else:
+                    for ni in itr:
+                        self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3(Hmat[splits[ni]:splits[ni+1]], None)
+                        # self.Eband[splits[ni]:splits[ni+1]],self.Evec[splits[ni]:splits[ni+1]] = eigh3_silent(Hmat[splits[ni]:splits[ni+1]])
             return self.Eband, self.Evec
         else:
             print("You have not defined a set of kpoints over which to diagonalize.")
