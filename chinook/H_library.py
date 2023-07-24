@@ -110,7 +110,7 @@ def txt_build(filename,cutoff,renorm,offset,tol,Nonsite):
             
     return Hlist
 
-def _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis):
+def _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis, scale_param,shift_lattice):
 
         
     Vdict,cutoff,pts = cluster_init(Vdict,cutoff,avec) #build region of lattice points, containing at least the cutoff distance
@@ -141,9 +141,9 @@ def _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_bas
     index_orbitals2 = index_ordering(basis2[:brange]) 
     H_raw = on_site(basis[:brange],V,offset) #fill in the on-site energies
     
-
-    # for append in Parallel(n_jobs=-1)(delayed(add_to_Hraw)(index_orbitals,SK_matrices, i1, i2, Vdict, cutoff, individual_cutoff, pts, avec, tol) for i1 in index_orbitals for i2 in index_orbitals):
-    #     H_raw += append
+    # i: dict of orbitals of true basis
+    # j: dict of orbitals of referene basis
+    # the keys are tuple of (a,n,l,x,y,z)
 
     for i1, j1 in zip(index_orbitals, index_orbitals2):
         for i2, j2 in zip(index_orbitals, index_orbitals2):
@@ -204,13 +204,19 @@ def _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_bas
                         SKvals = mirror_SK([vi for vi in Vlist])
                         SKmat_num = SKmat(Euler_A,Euler_B,Euler_y,SKvals) #explicitly compute the relevant Hopping matrix for this vector and these shells
                         if abs(SKmat_num).max()>tol:
-
-                            append = mat_els(Rij_0,SKmat_num * Rijn_0 / Rijn,tol,index_orbitals[i1],index_orbitals[i2])
+                            if scale_param:
+                                SKmat_num *=  Rijn_0 / Rijn
+                            if shift_lattice:
+                                # use new lattice
+                                append = mat_els(Rij_0,SKmat_num,tol,index_orbitals[i1],index_orbitals[i2])
+                            else:
+                                # use original (reference) lattice
+                                append = mat_els(Rij,SKmat_num,tol,index_orbitals[i1],index_orbitals[i2])
                             # append = mat_els(Rij,SKmat_num * Rijn_0 / Rijn,tol,index_orbitals[i1],index_orbitals[i2])
                             H_raw = H_raw + append
     return H_raw #finally return the list of Hamiltonian matrix elements
 
-def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis):
+def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis,scale_param,shift_lattice):
     
     '''
 
@@ -240,7 +246,7 @@ def sk_build(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis):
     ***
     '''
     if cutoff_ref_basis is not False:
-        return _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis)
+        return _sk_build_ref_basis(avec,basis,Vdict,cutoff,tol,renorm,offset,cutoff_ref_basis,scale_param,shift_lattice)
     
         
     Vdict,cutoff,pts = cluster_init(Vdict,cutoff,avec) #build region of lattice points, containing at least the cutoff distance
@@ -601,7 +607,7 @@ def cluster_init(Vdict,cutoff,avec):
 ###############################################################################
     
 
-def spin_double(H,lb):
+def spin_double(H,lb,executable=False):
     '''
     Duplicate the kinetic Hamiltonian terms to extend over the spin-duplicated 
     orbitals, which are by construction in same order and appended to end of the
@@ -623,11 +629,14 @@ def spin_double(H,lb):
     lenb = int(lb/2)
     h2 = []
     for i in range(len(H)):
-        h2.append([H[i][0]+lenb,H[i][1]+lenb,H[i][2],H[i][3],H[i][4],H[i][5]])
+        if executable:
+            h2.append([H[i][0]+lenb,H[i][1]+lenb,H[i][2]])
+        else:
+            h2.append([H[i][0]+lenb,H[i][1]+lenb,H[i][2],H[i][3],H[i][4],H[i][5]])
     return h2
 
 
-def SO(basis):
+def SO(basis,executable=False):
 
     '''
     Generate L.S  matrix-elements for a given basis. 
@@ -684,7 +693,11 @@ def SO(basis):
                     for f in factors:
                         if f[1]==ds:
                             LS_val+=o1.lam*factors[f]*L[(o1.atom,o1.n,o1.l)][f[0]][inds]*s
-                    HSO.append([o1.index,o2.index,0.,0.,0.,LS_val])
+                    if executable:
+                        HSO.append([o1.index,o2.index,lambda _: LS_val])
+                        # HSO.append([o1.index,o2.index,lambda _: 0.,lambda _: 0.,lambda _: 0.,lambda _:LS_val])
+                    else:
+                        HSO.append([o1.index,o2.index,0.,0.,0.,LS_val])
 
     return HSO
 
