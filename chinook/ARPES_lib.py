@@ -28,14 +28,12 @@
 #SOFTWARE.
 
 
-
 import numpy as np
 
-import sys
-import datetime as dt
+import shutil
+import tempfile
 
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 
 from scipy.interpolate import interp1d
 import scipy.ndimage as nd
@@ -44,6 +42,7 @@ from scipy.signal import hilbert
 # from multiprocessing import Pool
 # from multiprocessing.dummy import Pool as ThreadPool
 
+import joblib
 from joblib import Parallel, delayed
 from tqdm import tqdm
 from .dos import tqdm_joblib
@@ -80,7 +79,7 @@ kb = 1.38*10**-23
 
 ###
 
-@numba.njit(nogil=True)
+@numba.njit(nogil=True, cache=True)
 def _M_compute_base(i, nstates, Ylm_calls, B_eval, prefactors, Ev, pks, radint_pointers,
 proj_arr, Gbasis, spin, len_spin):
     Mtmp = np.zeros((2,3), dtype=np.complex128)
@@ -116,24 +115,6 @@ proj_arr, Gbasis, spin, len_spin, progress_hook):
             Mk[i,0,:] = _einsum_ij_ijk_k(pref, Gtmp)
         progress_hook.update(1)
     return Mk
-
-# @numba.njit(nogil=True)
-# def _M_compute_base(nstates, Ylm_calls, i, pks, B_eval, prefactors, Ev, radint_pointers,
-# proj_arr, Gbasis, spin, len_basis):
-#     Mtmp = np.zeros((2,3), dtype=np.complex128)
-#     pref = np.multiply(
-#         np.reshape(
-#             np.multiply(
-#                 prefactors,
-#                 Ev[int(pks[i,0] / nstates),:,int(pks[i,0] % nstates)]
-#             ), (-1, 1)), B_eval[radint_pointers])  
-#     Gtmp = _einsum_ij_ijkl_ikl(proj_arr, np.multiply(Ylm_calls, Gbasis))
-#     if spin:
-#         Mtmp[0,:] = _einsum_ij_ijk_k(pref[:int(len_basis/2)], Gtmp[:int(len_basis/2)])
-#         Mtmp[1,:] = _einsum_ij_ijk_k(pref[int(len_basis/2):], Gtmp[int(len_basis/2):])
-#     else:
-#         Mtmp[0,:] = _einsum_ij_ijk_k(pref, Gtmp)
-#     return Mtmp 
 
 @numba.njit(nogil=True, cache=True)
 def spectral_function(w, bareband, SE):
@@ -620,6 +601,27 @@ class experiment:
         return _M_compute_base(
             i, nstates=nstates, Ylm_calls=Ylm_calls, B_eval=B_eval, **calc_kw
         )
+    
+    def M_compute_from_mmap(self, Largs, Margs, th, ph, i, nstates, **calc_kw):
+        pks = calc_kw['pks']
+        Ylm_calls = Yvect(
+            # self.Largs, self.Margs, self.th[i],
+            Largs, Margs, th[i],
+            # self.ph[int(self.pks[i,0] / nstates)]
+            ph[int(pks[i,0] / nstates)]
+        )[self.orbital_pointers]
+        B_eval = np.array([
+            [b[0](pks[i,3]), b[1](pks[i,3])] for b in self.Bfuncs
+        ])
+        return _M_compute_base(
+            i, nstates=nstates, Ylm_calls=Ylm_calls, B_eval=B_eval, **calc_kw
+        )
+        
+    def M_compute_inplace_(self, mmap, Largs, Margs, th, ph, i, nstates, **calc_kw):
+        mmap[i,:,:] = self.M_compute_from_mmap(Largs, Margs, th, ph, i, nstates, **calc_kw)
+
+    def M_compute_inplace(self, mmap, i, nstates, **calc_kw):
+        mmap[i,:,:] = self.M_compute(i, nstates, **calc_kw)
 
 
     def thread_Mk(self, N=None, indices=None, **parallel_kw):
@@ -635,6 +637,35 @@ class experiment:
         """
         if N is None:
             N = self.threads
+
+        temp_folder = tempfile.mkdtemp()
+        
+        fname_out = tempfile.mkstemp(dir=temp_folder)[1]
+        _ = joblib.dump(self.Mk, fname_out)
+        output = np.memmap(
+            fname_out, dtype=self.Mk.dtype, shape=self.Mk.shape, mode='w+'
+        )
+        
+        # fname_Largs = tempfile.mkstemp(dir=temp_folder)[1]
+        # joblib.dump(self.Largs, fname_Largs)
+        # self.Largs = joblib.load(fname_Largs, mmap_mode='r')
+    
+        # fname_Margs = tempfile.mkstemp(dir=temp_folder)[1]
+        # joblib.dump(self.Margs, fname_Margs)
+        # self.Margs = joblib.load(fname_Margs, mmap_mode='r')
+    
+        # fname_th = tempfile.mkstemp(dir=temp_folder)[1]
+        # joblib.dump(self.th, fname_th)
+        # self.th = joblib.load(fname_th, mmap_mode='r')
+    
+        # fname_ph = tempfile.mkstemp(dir=temp_folder)[1]
+        # joblib.dump(self.ph, fname_ph)
+        # self.ph = joblib.load(fname_ph, mmap_mode='r')
+    
+        # fname_pks = tempfile.mkstemp(dir=temp_folder)[1]
+        # joblib.dump(self.pks, fname_pks)
+        # self.pks = joblib.load(fname_pks, mmap_mode='r')
+        
         compute_kw = dict(
             nstates=len(self.TB.basis), prefactors=self.prefactors,
             Ev=self.Ev, pks=self.pks, radint_pointers=self.radint_pointers,
@@ -643,14 +674,15 @@ class experiment:
         )
         if indices is None:
             indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])
+
         with tqdm_joblib(desc="Computing matrix elements",
                               total=len(indices)) as _:
             n_batch = round(len(indices)/100)
             if n_batch != 0:
                 parallel_kw.setdefault('batch_size', n_batch)
             parallel_kw.setdefault('pre_dispatch', '5*n_jobs')
-            computed = Parallel(n_jobs=N, **parallel_kw)(
-                delayed(self.M_compute)(i, **compute_kw) for i in indices)
+            Parallel(n_jobs=N, **parallel_kw)(
+                delayed(self.M_compute_inplace)(output, i, **compute_kw) for i in indices)
             # computed = Parallel(n_jobs=-1)(
                 # delayed(self.get_ycalls_beval)(i, len(self.TB.basis)) for i in indices)
         # with tqdm_numba(desc='Computing matrix elements', total=len(indices)) as pb:
@@ -662,8 +694,14 @@ class experiment:
         #         proj_arr=self.proj_arr, Gbasis=self.Gbasis, spin=self.spin,
         #         len_spin=int(len(self.basis)/2), progress_hook=pb,
         #     )
-        for i in range(len(indices)):
-            self.Mk[indices[i],:,:] += computed[i]
+        self.Mk[:] = output[:]
+        del output
+        try:
+            shutil.rmtree(temp_folder)
+        except:  # noqa
+            pass
+        # for i in range(len(indices)):
+            # self.Mk[indices[i],:,:] += computed[i]
 
     def get_ycalls_beval(self, i, nstates):
         Ylm_calls = Yvect(
@@ -679,21 +717,21 @@ class experiment:
     def assign_to_matrix(self, computed, ii):
         self.Mk[ii,:,:] += computed[ii]
         
-    def Mk_wrapper(self,ilist):
-        '''
-        Wrapper function for use in multiprocessing, to run each of the processes
-        as a serial matrix element calculation over a sublist of state indices.
+    # def Mk_wrapper(self,ilist):
+    #     '''
+    #     Wrapper function for use in multiprocessing, to run each of the processes
+    #     as a serial matrix element calculation over a sublist of state indices.
 
-        *args*:
-            - **ilist**: list of int, all state indices for execution.
+    #     *args*:
+    #         - **ilist**: list of int, all state indices for execution.
 
-        *return*:
-            - **Mk_out**: numpy array of complex float with shape (len(ilist), 2,3)
-        '''
-        Mk_out = np.zeros((len(ilist),2,3),dtype=complex)
-        for ii in list(enumerate(ilist)):
-            Mk_out[ii[0],:,:] += self.M_compute(ii[1])
-        return Mk_out
+    #     *return*:
+    #         - **Mk_out**: numpy array of complex float with shape (len(ilist), 2,3)
+    #     '''
+    #     Mk_out = np.zeros((len(ilist),2,3),dtype=complex)
+    #     for ii in list(enumerate(ilist)):
+    #         Mk_out[ii[0],:,:] += self.M_compute(ii[1])
+    #     return Mk_out
     
     
 
@@ -926,7 +964,7 @@ class experiment:
         return new_map
 
     def plot_intensity_map(
-        self, plot_map, slice_select, plot_bands=False, ax=None, **kwargs
+        self, plot_map, slice_select, plot_bands=False, ax_img=None, **kwargs
     ):
         '''
         Plot a slice of the intensity map computed in *spectral*. The user selects either
@@ -991,9 +1029,9 @@ class experiment:
             for ii in range(len(self.TB.basis)):
                 if self.TB.Eband[:,ii].min() <= x[slice_select[1]] and self.TB.Eband[:,ii].max() >= x[slice_select[1]]:
                     reshape = self.TB.Eband[:,ii].reshape(np.shape(X))
-                    ax.contour(X,Y,reshape,levels=[x[slice_select[1]]],colors='w',alpha=0.2)
-        ax.set_xlim(*ax_xlimit)
-        ax.set_ylim(*ax_ylimit)
+                    ax_img.contour(X,Y,reshape,levels=[x[slice_select[1]]],colors='w',alpha=0.2)
+        ax_img.set_xlim(*ax_xlimit)
+        ax_img.set_ylim(*ax_ylimit)
         
 
         # plt.colorbar(p,ax=ax)
