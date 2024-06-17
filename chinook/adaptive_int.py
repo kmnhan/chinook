@@ -42,9 +42,20 @@
 
 
 import scipy.special as sc
+import numpy as np
+import mpmath as mp
+
+_coulombf = np.frompyfunc(mp.coulombf, 3, 1)
 
 
-def general_Bnl_integrand(func,kn,lp):
+def coulombf(n, eta, x):
+    out = _coulombf(n, eta, x)
+    if np.iterable(out):
+        return out.astype(np.complex128)
+    else:
+        return np.complex128(out)
+
+def general_Bnl_integrand(func,kn,lp,sf_factor):
     
     '''
     Standard form of executable integrand in the e.r approximation of the matrix element
@@ -65,9 +76,14 @@ def general_Bnl_integrand(func,kn,lp):
     '''
     
     def lambda_gen():
-        return lambda r: (-1.0j)**lp*r**3*sc.spherical_jn(lp,r*kn)*func(r)
+        def fn(r):
+
+            return(-1.0j)**lp*r**3*(coulombf(lp,sf_factor,kn*r)/(kn*r))*func(r)
+        
+        return fn
     
     return lambda_gen()
+
 
 def rect(func,a,b):
     

@@ -263,6 +263,12 @@ class experiment:
             self.phase_shifts= ARPES_dict['phase_shifts']
         except KeyError:
             self.phase_shifts = None
+
+        try:
+            self.sf_par= ARPES_dict['sf_par']
+        except KeyError:
+            self.sf_par = None
+        
         try:
             self.slit = ARPES_dict['slit']
         except KeyError:
@@ -533,7 +539,7 @@ class experiment:
         self.Gbasis = Gmats[self.orbital_pointers]
         self.proj_arr = projection_map(self.basis)
         
-        rad_dict = {'hv':self.hv,'W':self.W,'rad_type':self.rad_type,'rad_args':self.rad_args,'phase_shifts':self.phase_shifts}
+        rad_dict = {'hv':self.hv,'W':self.W,'rad_type':self.rad_type,'rad_args':self.rad_args,'phase_shifts':self.phase_shifts,'sf_par':self.sf_par}
         self.Bfuncs, self.radint_pointers = radint_lib.make_radint_pointer(rad_dict,self.basis,self.barebands_range)
     # def M_compute(self,i):
     #     '''
@@ -1264,6 +1270,7 @@ def G_dic():
 
     llpmu = [[l[0],l[1],m,u] for l in llp for m in np.arange(-l[0],l[0]+1,1) for u in [-1,0,1]]
     keyvals = [[str(l[0])+str(l[1])+str(l[2])+str(l[3]), Ylm.gaunt(l[0],l[2],l[1]-l[0],l[3])] for l in llpmu]
+
     G_dict = dict(keyvals)
     
     for gi in G_dict:

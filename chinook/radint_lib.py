@@ -81,7 +81,7 @@ def make_radint_pointer(rad_dict,basis,Eb):
     '''
     radial_funcs = define_radial_wavefunctions(rad_dict,basis)
     fixed = True if ('rad_type' in rad_dict.keys() and rad_dict['rad_type']=='fixed') else False
-    B_dictionary = fill_radint_dic(Eb,radial_funcs,rad_dict['hv'],rad_dict['W'],rad_dict['phase_shifts'],fixed)
+    B_dictionary = fill_radint_dic(Eb,radial_funcs,rad_dict['hv'],rad_dict['W'],rad_dict['phase_shifts'],rad_dict['sf_par'],fixed)
     B_array,B_pointers = radint_dict_to_arr(B_dictionary,basis)
     
     return B_array, B_pointers
@@ -267,9 +267,9 @@ def gen_orb_labels(basis):
         if o_str not in orbitals.keys():
             orbitals[o_str] = [o.Z,o.label]
     return orbitals
-    
 
-def radint_calc(k_norm,orbital_funcs,phase_shifts=None):
+
+def radint_calc(k_norm,orbital_funcs,phase_shifts=None,sf_par=None):
     
     '''
     Compute dictionary of radial integrals evaluated at a single |k| value
@@ -309,12 +309,13 @@ def radint_calc(k_norm,orbital_funcs,phase_shifts=None):
                 phase_factor = 1.0
             else:
                 phase_factor = phase_shifts[Blabel]
+                sf_factor = sf_par[Blabel]
             if Blabel not in Bdic.keys():
                 if lp<0:
                     tmp_B = 0.0
                 else:
                 
-                    integrand = adint.general_Bnl_integrand(orbital_funcs[o],k_norm,lp)
+                    integrand = adint.general_Bnl_integrand(orbital_funcs[o],k_norm,lp,sf_factor)
                     b = find_cutoff(integrand)
                     a = 0.001
                         
@@ -325,7 +326,8 @@ def radint_calc(k_norm,orbital_funcs,phase_shifts=None):
                 Bdic[Blabel]=tmp_B
     return Bdic
 
-def fill_radint_dic(Eb,orbital_funcs,hv,W=0.0,phase_shifts=None,fixed=False):
+
+def fill_radint_dic(Eb,orbital_funcs,hv,W=0.0,phase_shifts=None,sf_par=None,fixed=False):
     
     '''
     Function for computing dictionary of radial integrals. 
@@ -376,7 +378,7 @@ def fill_radint_dic(Eb,orbital_funcs,hv,W=0.0,phase_shifts=None,fixed=False):
                 tmp_Bdic = dict()
                 if ((hv-W)+en)>=0:
                     k_coarse = np.sqrt(2.0*me/hb**2*((hv-W)+en)*q)*A #calculate full 3-D k vector at this surface k-point given the incident radiation wavelength, and the energy eigenvalue, note binding energy follows opposite sign convention
-                    tmp_Bdic = radint_calc(k_coarse,orbital_funcs,phase_shifts) 
+                    tmp_Bdic = radint_calc(k_coarse,orbital_funcs,phase_shifts,sf_par) 
                 for b in tmp_Bdic:
                     try:
                         BD_coarse[b].append(tmp_Bdic[b])
