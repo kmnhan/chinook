@@ -44,7 +44,7 @@ from scipy.signal import hilbert
 
 import joblib
 from joblib import Parallel, delayed
-from tqdm import tqdm
+import tqdm
 from .dos import tqdm_joblib
 from numba_progress import ProgressBar as tqdm_numba
 import numba
@@ -681,14 +681,21 @@ class experiment:
         if indices is None:
             indices = np.array([i for i in range(len(self.pks)) if (self.th[i]>=0)])
 
-        with tqdm_joblib(desc="Computing matrix elements",
-                              total=len(indices)) as _:
-            n_batch = round(len(indices)/100)
-            if n_batch != 0:
-                parallel_kw.setdefault('batch_size', n_batch)
-            parallel_kw.setdefault('pre_dispatch', '5*n_jobs')
-            Parallel(n_jobs=N, **parallel_kw)(
-                delayed(self.M_compute_inplace)(output, i, **compute_kw) for i in indices)
+        # with tqdm_joblib(desc="Computing matrix elements",
+                            #   total=len(indices)) as _:
+
+        n_batch = round(len(indices)/100)
+        if n_batch != 0:
+            parallel_kw.setdefault('batch_size', n_batch)
+        parallel_kw.setdefault('pre_dispatch', '5*n_jobs')
+        parallel_kw['return_as'] = 'generator'
+        flags = tqdm.auto.tqdm(Parallel(n_jobs=N, **parallel_kw)(
+            delayed(self.M_compute_inplace)(output, i, **compute_kw) for i in indices),
+            desc="Computing matrix elements",
+            total=len(indices))
+        
+        tuple(flags) # this exists so that the generator is not garbage collected
+        # del flags
             # computed = Parallel(n_jobs=-1)(
                 # delayed(self.get_ycalls_beval)(i, len(self.TB.basis)) for i in indices)
         # with tqdm_numba(desc='Computing matrix elements', total=len(indices)) as pb:

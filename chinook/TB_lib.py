@@ -71,7 +71,7 @@ Tight-Binding Utility module
 #         progress_hook.update(1)
 #     return W, V
 # 
-# @numba.njit(nogil=True, parallel=True, cache=True)
+@numba.njit(nogil=True, parallel=True, cache=True)
 def eigh3_silent(a):
     a = a.transpose((0,2,1))
     W = np.empty((a.shape[0], a.shape[-1]))
@@ -516,8 +516,8 @@ class TB_model:
             )
             if not self.mat_els[0].executable:
                 
-                i_arr = np.empty(len(self.mat_els), dtype=int)
-                j_arr = np.empty(len(self.mat_els), dtype=int)
+                i_arr = np.empty(len(self.mat_els), dtype=np.int64)
+                j_arr = np.empty(len(self.mat_els), dtype=np.int64)
                 H_list = []
                 for i, me in enumerate(self.mat_els):
                     i_arr[i], j_arr[i] = me.i, me.j
@@ -646,7 +646,7 @@ class TB_model:
             ax.plot(self.Kobj.kcut,np.transpose(self.Eband)[i,:],
                     color=color,ls=ls,lw=lw,**kwargs)
 
-        plt.xticks(self.Kobj.kcut_brk, self.Kobj.labels)
+        ax.set_xticks(self.Kobj.kcut_brk, self.Kobj.labels)
         if win_max == None or win_min == None:
             ax.set_xlim(self.Kobj.kcut[0], self.Kobj.kcut[-1])
             ax.set_ylim(Emin - 1.0, Emax + 1.0)

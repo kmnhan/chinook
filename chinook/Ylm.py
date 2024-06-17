@@ -51,7 +51,7 @@ projdict = {
 }
 
 
-@numba.njit(nogil=True)
+# @numba.njit(nogil=True)
 def Y(l, m, theta, phi):
     """
     Spherical harmonics, defined here up to l = 4. This allows for photoemission from
@@ -75,7 +75,7 @@ def Y(l, m, theta, phi):
     """
     if l == 0:
         if m == 0:
-            return 0.5 * np.sqrt(1.0 / np.pi) * np.ones_like(phi)
+            return 0.5 * np.sqrt(1.0 / np.pi) * value_one(theta, phi)
         else:
             return 0.0
     elif l == 1:

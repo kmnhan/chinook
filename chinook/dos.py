@@ -771,25 +771,12 @@ def progress_bar(N,Nmax):
 import tqdm
 
 @contextlib.contextmanager
-def tqdm_joblib(file=None, notebook=None, dynamic_ncols=True, **kwargs):
-    """Context manager to patch joblib to report into tqdm progress bar given as
-    argument"""
-    
+def tqdm_joblib(file=None, **kwargs):
+    """Patches joblib to report into a tqdm progress bar."""
     if file is None:
         file = sys.stdout
-    
-    if notebook is None:
-        if "IPython" not in sys.modules:  # IPython hasn't been imported
-            notebook = False
-        else:
-            from IPython import get_ipython
-            notebook = getattr(get_ipython(), "kernel", None) is not None
 
-        
-    if notebook:
-        tqdm_object = tqdm.notebook.tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file,  **kwargs)
-    else:
-        tqdm_object = tqdm.tqdm(iterable=None, dynamic_ncols=dynamic_ncols, file=file, **kwargs)
+    tqdm_object = tqdm.auto.tqdm(iterable=None, file=file, **kwargs)
 
     def tqdm_print_progress(self):
         if self.n_completed_tasks > tqdm_object.n:
