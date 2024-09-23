@@ -765,10 +765,7 @@ def progress_bar(N,Nmax):
 
 
 
-
-# from tqdm import tqdm
-# from tqdm.notebook import tqdm as tqdm_notebook
-import tqdm
+import tqdm.auto
 
 @contextlib.contextmanager
 def tqdm_joblib(file=None, **kwargs):
