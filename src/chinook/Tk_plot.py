@@ -42,7 +42,6 @@ import matplotlib.cm as cm
 try:
     import tkinter as Tk
     from tkinter import messagebox
-    from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
     tk_found = True
 except ModuleNotFoundError:
     print('tkinter not found, please load for interactive map plotting')
@@ -94,7 +93,9 @@ if tk_found:
             self.plot_make()
     
         def plot_make(self):
-               
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            # Defer imports, https://github.com/astral-sh/uv/issues/10342
+            
             self.root.wm_title('CHINOOK DATA PLOTTER')
     
             fig1 = Figure(figsize=(5,5))
