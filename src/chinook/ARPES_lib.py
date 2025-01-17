@@ -124,10 +124,11 @@ def spectral_function(w, bareband, SE):
 @numba.njit(nogil=True, parallel=True, cache=True)
 def _calc_spectral_intensity_SE_k(I, SE, pks, M_factor, w, fermi, progress_hook):
     for p in numba.prange(pks.shape[0]):
-        i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
-        I[i, j, :] += M_factor[p] * spectral_function(w, pks[p, 3], SE[i, j :]) * fermi
+        i = int(np.real(pks[p, 1]))
+        j = int(np.real(pks[p, 2]))
+        se_val = SE[i, j].astype(np.complex128)
+        I[i, j, :] += M_factor[p] * spectral_function(w, pks[p, 3], se_val) * fermi
         progress_hook.update(1)
-    # return I
 
 
 @numba.njit(nogil=True, parallel=True, cache=True)
