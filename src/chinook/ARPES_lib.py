@@ -137,7 +137,6 @@ def _calc_spectral_intensity(I, SE, pks, M_factor, w, fermi, progress_hook):
         i, j = int(np.real(pks[p, 1])), int(np.real(pks[p, 2]))
         I[i, j, :] +=  M_factor[p] * spectral_function(w, pks[p, 3], SE)* fermi
         progress_hook.update(1)
-    # return I
 
 
 class experiment:
