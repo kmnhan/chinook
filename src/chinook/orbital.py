@@ -122,7 +122,9 @@ class orbital:
         self.n,self.l = int(self.label[0]),int(self.label[1])
         self.Dmat = np.identity(2*self.l+1)
         if slab_index is None:
-            self.slab_index = index #this is redundant for bulk calc, but index in slab is distinct from lattice index
+            self.slab_index = None #this is redundant for bulk calc, but index in slab is distinct from lattice index
+            # This should be None instead of zero since it is passed straight to soc
+            # basis generation, so spin-split orbitals are treated as having depth!
             self.depth = 0.0
         else:
             self.slab_index = slab_index
