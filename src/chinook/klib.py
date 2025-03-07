@@ -388,9 +388,11 @@ def kz_kpt(hv,kpt,W=0,V=0):
         - **kz**: float, out of plane momentum, inverse Angstrom
     ***
     '''
-    kn = np.sqrt(2*me/hb**2*(hv-W)*q)*A
+    # kn = np.sqrt(2*me/hb**2*(hv-W)*q)*A
+    kn = 0.512316721967493 * np.sqrt(hv-W)
     
-    kz= np.sqrt(2*me/hb**2*((hv-W)*(1-(kpt/kn)**2)+V)*q)*A
+    kz = np.sqrt(kn **2 - kpt**2 + V / 3.8099821161548606)
+    # kz= np.sqrt(2*me/hb**2*((hv-W)*(1-(kpt/kn)**2)+V)*q)*A
     
     return kz
 

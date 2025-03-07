@@ -10,10 +10,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-hb = 6.626e-34/(2*np.pi)
-kb = 1.38e-23
-q = 1.602e-19
-me = 9.11e-31
+hb = 1.0545718176461565e-34
+kb = 1.380649e-23
+q = 1.602176634e-19
+me = 9.1093837015e-31
 A = 1e-10
 
 
@@ -21,7 +21,8 @@ def k_parallel(ek):
     '''
     Convert kinetic energy in eV to inverse Angstrom
     '''
-    return np.sqrt(2*me/hb**2*ek*q)*A
+    return 0.512316721967493 * np.sqrt(ek)
+    # return np.sqrt(2*me/hb**2*ek*q)*A
 
 
 def ang_mesh(N,th,ph):

@@ -32,13 +32,13 @@ import chinook.adaptive_int as adint
 import chinook.electron_configs as econ
 
 ####PHYSICAL CONSTANTS RELEVANT TO CALCULATION#######
-hb = 6.626*10**-34/(2*np.pi)
-c  = 3.0*10**8
-q = 1.602*10**-19
-A = 10.0**-10
-me = 9.11*10**-31
-mN = 1.67*10**-27
-kb = 1.38*10**-23
+hb = 1.0545718176461565e-34
+c  = 299792458.0
+q = 1.602176634e-19
+A = 1e-10
+me = 9.1093837015e-31
+mN = 1.67492749804e-27
+kb = 1.380649e-23
 
 
 def make_radint_pointer(rad_dict,basis,Eb):
@@ -366,16 +366,19 @@ def fill_radint_dic(Eb,orbital_funcs,hv,W=0.0,phase_shifts=None,fixed=False):
         Brad = {o:orbital_funcs[o] for o in orbital_funcs}
     else:
 
-        if type(Eb)==float:
-            kval = np.sqrt(2.0*me/hb**2*((hv-W)+Eb)*q)*A 
+        if np.isscalar(Eb):
+            # kval = np.sqrt(2.0*me/hb**2*((hv-W)+Eb)*q)*A 
+            kval = 0.512316721967493 * np.sqrt(hv - W + Eb)
             return (radint_calc(kval,orbital_funcs) if ((hv-W)+Eb)>=0 else 0)
-        elif type(Eb)==tuple:
+        elif isinstance(Eb, tuple):
             Brad_es=np.linspace(Eb[0],Eb[-1],5)
             BD_coarse=dict()
             for en in Brad_es:
                 tmp_Bdic = dict()
                 if ((hv-W)+en)>=0:
-                    k_coarse = np.sqrt(2.0*me/hb**2*((hv-W)+en)*q)*A #calculate full 3-D k vector at this surface k-point given the incident radiation wavelength, and the energy eigenvalue, note binding energy follows opposite sign convention
+                    k_coarse = 0.512316721967493 * np.sqrt(hv - W + en)
+                    # k_coarse = np.sqrt(2.0*me/hb**2*((hv-W)+en)*q)*A
+                    # calculate full 3-D k vector at this surface k-point given the incident radiation wavelength, and the energy eigenvalue, note binding energy follows opposite sign convention
                     tmp_Bdic = radint_calc(k_coarse,orbital_funcs,phase_shifts) 
                 for b in tmp_Bdic:
                     try:
